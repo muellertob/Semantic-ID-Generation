@@ -18,6 +18,13 @@ from utils.model_id_generation import generate_model_id
 from schemas.quantization import QuantizeForwardMode
 import argparse
 import logging
+import random
+import numpy as np
+
+def set_seed(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -104,7 +111,9 @@ def main():
 
     # Load configuration
     config = OmegaConf.load(args.config)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    seed = getattr(config.train, 'seed', 42)
+    set_seed(seed)
+    device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
     model_id = generate_model_id(config)
 
     logger.info(f"Using device: {device}")

@@ -1,7 +1,7 @@
 import torch
 import os
 from data.amazon_data import AmazonReviews
-from sklearn.preprocessing import normalize
+import torch.nn.functional as F
 import pandas as pd
 from sentence_transformers import SentenceTransformer
 import torch
@@ -15,7 +15,7 @@ def load_amazon(category='beauty', normalize_data=True, train=True):
     data, _, _ = torch.load(path, weights_only=False)
     
     if normalize_data:
-        data['item']['x'] = normalize(data['item']['x'].clone())
+        data['item']['x'] = F.normalize(data['item']['x'], p=2, dim=1) # L2 norm across rows to align the magnitudes
         
     data_clean = data['item']['x'][data['item']['is_train']== train]
 
@@ -41,13 +41,19 @@ def load_movie_lens(category='1M', dimension="user", train=True, raw=True):
 
     # Build textual inputs based on the dimension
     if dimension == "user":
-        texts = data.apply(lambda row: f"User is a {row['age:token']}-year-old\
-                           {"male" if row['gender:token']=="M" else "female"} \
-                           {row['occupation:token']}\
-                           living in zip code {row['zip_code:token']}.", axis=1).tolist()		
+        texts = data.apply(
+            lambda row: f"""User is a {row['age:token']}-year-old \
+{'male' if row['gender:token'] == 'M' else 'female'} \
+{row['occupation:token']} \
+living in zip code {row['zip_code:token']}.""",
+            axis=1
+        ).tolist()
     elif dimension == "item":
-        texts = data.apply(lambda row: f"The movie {row['movie_title:token_seq']} was realeased in {row['release_year:token']} \
-                           has mostly regarded these genres: {row['genre:token_seq']}.", axis=1).tolist()
+        texts = data.apply(
+            lambda row: f"""The movie {row['movie_title:token_seq']} was released in {row['release_year:token']} \
+and has mostly regarded these genres: {row['genre:token_seq']}.""",
+            axis=1
+        ).tolist()
     elif dimension == "relation":
         texts = data.apply(lambda row: f"{row['relation_nl:token']}", axis=1).tolist()
     elif dimension == "entity":
