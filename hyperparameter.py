@@ -227,7 +227,7 @@ def hyperparameter_tuning(config_path, search_type="random", num_trials=50, outp
     
     # Load base configuration
     base_config = OmegaConf.load(config_path)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
     
     # Load data once
     print("Loading data...")

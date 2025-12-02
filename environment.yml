@@ -1,0 +1,45 @@
+name: semantic-id-generation
+channels:
+  - pytorch      # Prioritize the official Pytorch channel (best for MPS/Mac)
+  - conda-forge  # Fallback for other libraries (Polars, Transformers, etc.)
+  - defaults
+dependencies:
+  # Core Python
+  - python=3.10
+  - pip
+  
+  # PyTorch
+  - pytorch=2.9 # fixed gumbel_softmax issue with MPS
+  - torchvision
+  - pytorch_geometric
+  
+# Data Science & Processing
+  - numpy
+  - pandas
+  - polars
+  - scikit-learn
+  - scipy
+  - pyarrow
+  
+  # NLP & Transformers
+  - sentence-transformers
+  - transformers
+  - tokenizers
+  
+  # ML Utilities
+  - einops
+  - hyperopt
+  - tqdm
+  - python-dotenv
+  
+  # Config & Logging
+  - hydra-core
+  - omegaconf
+  - pyyaml
+  - wandb
+  - torchmetrics
+  
+  # Notebooks & Analysis
+  - jupyter
+  - ipykernel
+  - matplotlib
