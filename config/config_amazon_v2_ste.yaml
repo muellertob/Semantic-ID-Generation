@@ -1,0 +1,42 @@
+# Data loader configuration
+data:
+  dataset: "amazon"
+  batch_size: 256
+  normalize_data: False
+  category: "beauty"
+
+# Model configuration
+model:
+  input_dimension: 768
+  hidden_dimensions: [768, 512, 256]
+  latent_dimension: 256
+  num_codebook_layers: 3
+  codebook_clusters: 128
+  commitment_weight: 0.15
+
+  # Quantization method: "ste" (Straight-Through Estimation) or "gumbel_softmax"
+  quantization_method: "ste"
+
+# Training configuration
+train:
+  seed: 10
+  learning_rate: 1e-3
+  weight_decay: 1e-4
+  num_epochs: 256
+
+  # Temperature annealing (for Gumbel Softmax)
+  temperature_annealing: True
+  temperature_update_frequency: 1 # Update temperature every epoch
+  annealing_schedule: "cosine"
+
+  # Gumbel Softmax parameters
+  temperature: 1.0 # Higher initial temperature for softer assignments
+  min_temperature: 0.5 # Lower minimum for sharper final assignments
+  temperature_decay: 0.995 # Slower decay for gradual annealing
+
+# Additional configuration
+general:
+  use_wandb: True
+  wandb_project: "mt-amazon"
+  wandb_entity: "tobias-mueller99-johannes-kepler-universit-t-linz"
+  save_model: True
