@@ -1,7 +1,7 @@
 import torch
 import argparse
 from omegaconf import OmegaConf
-from data.loader import load_movie_lens
+from data.factory import load_data
 from modules.rq_vae import RQ_VAE
 import os
 import pickle
@@ -10,18 +10,10 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def load_trained_model(model_path, config, device):
+def load_trained_model(model_path, config, device, input_dim):
     """Load a trained RQ-VAE model."""
-    # Get input dimension from data
-    data = load_movie_lens(
-        category=config.data.category,
-        dimension=config.data.embedding_dimension,
-        train=True,
-        raw=True
-    )
-    
     model = RQ_VAE(
-        input_dim=data.shape[1],
+        input_dim=input_dim,
         latent_dim=config.model.latent_dimension,
         hidden_dims=config.model.hidden_dimensions,
         codebook_size=config.model.codebook_clusters,
@@ -76,20 +68,15 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
     
     logger.info(f"Using device: {device}")
-    logger.info(f"Loading model from: {args.model_path}")
-    
-    # Load trained model
-    model = load_trained_model(args.model_path, config, device)
     
     # Load all items data
-    data = load_movie_lens(
-        category=config.data.category,
-        dimension=config.data.embedding_dimension,
-        train=True,
-        raw=True
-    )
+    data = load_data(config)
     
     logger.info(f"Loaded {len(data)} items with dimension {data.shape[1]}")
+    
+    # Load trained model
+    logger.info(f"Loading model from: {args.model_path}")
+    model = load_trained_model(args.model_path, config, device, data.shape[1])
     
     # Generate semantic IDs
     logger.info("Generating semantic IDs...")

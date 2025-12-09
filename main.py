@@ -12,7 +12,7 @@ from torch.optim import lr_scheduler
 from utils.wandb import wandb_init
 from train_rq_vae import train
 from omegaconf import OmegaConf
-from data.loader import load_movie_lens, load_amazon
+from data.factory import load_data
 from modules.rq_vae import RQ_VAE
 from utils.model_id_generation import generate_model_id
 from schemas.quantization import QuantizeForwardMode
@@ -29,41 +29,6 @@ def set_seed(seed=42):
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-def load_data(config):
-    """
-    Load dataset based on configuration.
-
-    Args:
-        config: OmegaConf configuration object
-
-    Returns:
-        torch.Tensor: Loaded dataset
-
-    Raises:
-        NotImplementedError: For unsupported datasets
-        ValueError: For unknown dataset names
-    """
-    if config.data.dataset == "movielens":
-        data = load_movie_lens(
-            category=config.data.category,
-            dimension=config.data.embedding_dimension,
-            train=True,
-            raw=True
-        )
-    elif config.data.dataset == "amazon":
-        data = load_amazon(
-            category=config.data.category,
-            normalize_data=config.data.normalize_data,
-            train=True
-        )
-    elif config.data.dataset == "lastfm":
-        raise NotImplementedError("LastFM dataset loading is not implemented yet.")
-    else:
-        raise ValueError(f"Unknown dataset: {config.data.dataset}")
-
-    logger.info(f"Loaded {config.data.dataset} dataset with shape: {data.shape}")
-    return data
 
 def create_model(config, input_dim):
     """
