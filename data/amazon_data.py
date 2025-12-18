@@ -72,15 +72,21 @@ class AmazonReviews(InMemoryDataset, PreprocessingMixin):
                 user_ids.append(parsed_line[0])
                 items = [self._remap_ids(id) for id in parsed_line[1:]]
                 
-                # We keep the whole sequence without padding. Allows flexible training-time subsampling.
+                # TRAIN SPLIT
+                # all but last two items
+                # note: we store the full un-padded sequence for training flexibility.
                 train_items = items[:-2]
-                sequences["train"]["itemId"].append(train_items)
+                sequences["train"]["itemId"].append(train_items) # as stated in TIGER: we will only train on this
                 sequences["train"]["itemId_fut"].append(items[-2])
                 
+                # EVAL SPLIT
+                # window sequence with second last item as target
                 eval_items = items[-(max_seq_len+2):-2]
                 sequences["eval"]["itemId"].append(eval_items + [-1] * (max_seq_len - len(eval_items)))
                 sequences["eval"]["itemId_fut"].append(items[-2])
                 
+                # TEST SPLIT
+                # window sequence with last item as target
                 test_items = items[-(max_seq_len+1):-1]
                 sequences["test"]["itemId"].append(test_items + [-1] * (max_seq_len - len(test_items)))
                 sequences["test"]["itemId_fut"].append(items[-1])

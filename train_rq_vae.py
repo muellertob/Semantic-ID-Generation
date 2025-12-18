@@ -3,14 +3,65 @@ Training script for RQ-VAE with support for temperature annealing and multiple q
 """
 
 import torch
+import torch.optim as optim
+from torch.optim import lr_scheduler
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 import wandb
 import logging
+import random
+import numpy as np
+from omegaconf import OmegaConf
 from modules.temperature_scheduler import create_temperature_scheduler
 from schemas.quantization import QuantizeForwardMode
+from utils.wandb import wandb_init
+from data.factory import load_data
+from modules.rq_vae import RQ_VAE
+from utils.model_id_generation import generate_model_id
 
 logger = logging.getLogger(__name__)
+
+def set_seed(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+def create_model(config, input_dim):
+    """
+    Create RQ-VAE model with configuration parameters.
+
+    Args:
+        config: OmegaConf configuration object
+        input_dim: Input dimension of the data
+
+    Returns:
+        RQ_VAE: Configured model instance
+    """
+    # Get quantization parameters with defaults
+    quantization_method_str = getattr(config.model, 'quantization_method', 'ste')
+
+    # Convert string to enum
+    if quantization_method_str == "gumbel_softmax":
+        quantization_method = QuantizeForwardMode.GUMBEL_SOFTMAX
+    elif quantization_method_str == "ste":
+        quantization_method = QuantizeForwardMode.STE
+    else:
+        raise ValueError(f"Unknown quantization method: {quantization_method_str}")
+
+    model = RQ_VAE(
+        input_dim=input_dim,
+        latent_dim=config.model.latent_dimension,
+        hidden_dims=config.model.hidden_dimensions,
+        codebook_size=config.model.codebook_clusters,
+        codebook_kmeans_init=True,
+        codebook_sim_vq=True,
+        n_quantization_layers=config.model.num_codebook_layers,
+        commitment_weight=config.model.commitment_weight,
+        quantization_method=quantization_method,
+    )
+
+    logger.info(f"Created RQ-VAE model with {quantization_method_str} quantization")
+    return model
 
 def train(model, data, optimizer, scheduler, num_epochs, device, config):
     """
@@ -119,3 +170,55 @@ def train(model, data, optimizer, scheduler, num_epochs, device, config):
         results.append(epoch_stats)
 
     return results
+
+def run_training(config_path):
+    """
+    Orchestrate RQ-VAE training.
+    """
+    # Load configuration
+    config = OmegaConf.load(config_path)
+    seed = getattr(config.train, 'seed', 42)
+    set_seed(seed)
+    device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
+    model_id = generate_model_id(config)
+
+    logger.info(f"Using device: {device}")
+    logger.info(f"Model ID: {model_id}")
+
+    # Initialize wandb if enabled
+    if config.general.use_wandb:
+        wandb_init(config)
+
+    # Load data and create model
+    data = load_data(config)
+    model = create_model(config, data.shape[1])
+    model.to(device)
+
+    # Setup optimizer and scheduler
+    optimizer = optim.AdamW(model.parameters(),
+                           lr=config.train.learning_rate,
+                           weight_decay=config.train.weight_decay)
+    scheduler = lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
+
+    # Watch model with wandb if enabled
+    if config.general.use_wandb:
+        wandb.watch(model, log="all")
+
+    # Train model
+    logger.info("Starting training...")
+    train_results = train(
+        model=model,
+        data=data,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        num_epochs=config.train.num_epochs,
+        device=device,
+        config=config
+    )
+
+    # Save model
+    torch.save(model.state_dict(), f"models/{model_id}.pt")
+    logger.info(f"Training completed. Final results: {train_results[-1]}")
+
+    if config.general.use_wandb:
+        wandb.finish()

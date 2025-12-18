@@ -43,3 +43,4 @@ dependencies:
   - jupyter
   - ipykernel
   - matplotlib
+  - seaborn
