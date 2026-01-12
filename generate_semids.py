@@ -4,7 +4,6 @@ from omegaconf import OmegaConf
 from data.factory import load_data
 from modules.rq_vae import RQ_VAE
 import os
-import pickle
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -48,23 +47,59 @@ def generate_all_semids(model, data, device, batch_size=64, temperature=1.0):
     
     return torch.cat(all_semids, dim=0)
 
-def main():
-    parser = argparse.ArgumentParser(description="Generate semantic IDs for ML-100k items")
-    parser.add_argument('--config', type=str, default='config/config_ml100k_item.yaml',
-                       help='Path to the configuration file')
-    parser.add_argument('--model_path', type=str, required=True,
-                       help='Path to the trained model file')
-    parser.add_argument('--output_path', type=str, default='outputs/ml100k_semids.pt',
-                       help='Path to save the semantic IDs')
-    parser.add_argument('--temperature', type=float, default=0.5,
-                       help='Temperature for Gumbel Softmax (lower = sharper)')
-    parser.add_argument('--batch_size', type=int, default=64,
-                       help='Batch size for processing')
+def resolve_collisions(semids, max_collisions):
+    """
+    Append a collision token to the semantic IDs to make them unique.
+    Args:
+        semids (torch.Tensor): Tensor of shape (num_items, num_layers)
+        max_collisions (int): Maximum allowed collisions (vocab size of collision layer)
+    Returns:
+        torch.Tensor: Tensor of shape (num_items, num_layers + 1)
+    """
+    logger.info("Resolving collisions...")
+    device = semids.device
+    num_items = semids.shape[0]
+
+    # assigns a unique index to each semid
+    _, inverse_indices = torch.unique(semids, sorted=True, return_inverse=True, dim=0)
     
-    args = parser.parse_args()
+    # calculates the permuatation needed to group identical semids together
+    perm = torch.argsort(inverse_indices)
+    inverse_sorted = inverse_indices[perm]
+
+    # counts how many items are in each group of identical semids
+    _, counts = torch.unique_consecutive(inverse_sorted, return_counts=True)
     
+    # Generate cumulative counts (0, 1, 2...) for each group
+    group_starts = torch.cat((torch.zeros(1, dtype=torch.long, device=device), counts.cumsum(0)[:-1]))
+    expanded_starts = group_starts.repeat_interleave(counts)
+    sorted_cumcounts = torch.arange(num_items, device=device) - expanded_starts
+    
+    # restore the original order
+    collision_tokens = torch.zeros_like(inverse_indices)
+    collision_tokens[perm] = sorted_cumcounts
+    
+    # check for overflow
+    max_depth = collision_tokens.max().item()
+    if max_depth >= max_collisions:
+        raise ValueError(
+            f"Collision overflow! Max depth {max_depth} exceeds limit {max_collisions}."
+        )
+
+    final_ids = torch.cat([semids, collision_tokens.unsqueeze(1)], dim=1)
+    
+    num_collisions = (collision_tokens > 0).sum().item()
+    logger.info(f"Found {num_collisions} items with collisions.")
+    logger.info(f"Max collision depth: {max_depth} (Limit: {max_collisions})")
+    
+    return final_ids
+
+def run_generation(config_path, model_path, output_path, temperature=0.5, batch_size=64):
+    """
+    Orchestrate semantic ID generation.
+    """
     # Load configuration
-    config = OmegaConf.load(args.config)
+    config = OmegaConf.load(config_path)
     device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
     
     logger.info(f"Using device: {device}")
@@ -75,36 +110,64 @@ def main():
     logger.info(f"Loaded {len(data)} items with dimension {data.shape[1]}")
     
     # Load trained model
-    logger.info(f"Loading model from: {args.model_path}")
-    model = load_trained_model(args.model_path, config, device, data.shape[1])
+    logger.info(f"Loading model from: {model_path}")
+    model = load_trained_model(model_path, config, device, data.shape[1])
     
     # Generate semantic IDs
     logger.info("Generating semantic IDs...")
     semids = generate_all_semids(
         model, data, device, 
-        batch_size=args.batch_size,
-        temperature=args.temperature
+        batch_size=batch_size,
+        temperature=temperature
     )
     
-    logger.info(f"Generated semantic IDs shape: {semids.shape}")
+    logger.info(f"Generated raw semantic IDs shape: {semids.shape}")
+    
+    # Resolve Collisions (Add 4th token)
+    # Pass codebook_clusters as the limit for the collision token
+    codebook_size = config.model.codebook_clusters
+    final_semids = resolve_collisions(semids, max_collisions=codebook_size)
     
     # Save results
-    os.makedirs(os.path.dirname(args.output_path), exist_ok=True)
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
     torch.save({
-        'semantic_ids': semids,
+        'semantic_ids': final_semids,
         'config': config,
         'num_items': len(data),
-        'temperature': args.temperature
-    }, args.output_path)
+        'temperature': temperature
+    }, output_path)
     
-    logger.info(f"Semantic IDs saved to: {args.output_path}")
+    logger.info(f"Semantic IDs saved to: {output_path}")
     
     # Print some statistics
     logger.info(f"Semantic ID statistics:")
-    logger.info(f"  Shape: {semids.shape}")
-    logger.info(f"  Min ID per layer: {semids.min(dim=0)[0]}")
-    logger.info(f"  Max ID per layer: {semids.max(dim=0)[0]}")
-    logger.info(f"  Unique IDs per layer: {[len(torch.unique(semids[:, i])) for i in range(semids.shape[1])]}")
+    logger.info(f"  Shape: {final_semids.shape}")
+    logger.info(f"  Min ID per layer: {final_semids.min(dim=0)[0]}")
+    logger.info(f"  Max ID per layer: {final_semids.max(dim=0)[0]}")
+    logger.info(f"  Unique IDs per layer: {[len(torch.unique(final_semids[:, i])) for i in range(final_semids.shape[1])]}")
+
+def main():
+    parser = argparse.ArgumentParser(description="Generate semantic IDs using a trained RQ-VAE model")
+    parser.add_argument('--config', type=str, default='config/config_amazon_v2_gumbel.yaml',
+                       help='Path to the configuration file')
+    parser.add_argument('--model_path', type=str, required=True,
+                       help='Path to the trained model file')
+    parser.add_argument('--output_path', type=str, default='outputs/semids.pt',
+                       help='Path to save the semantic IDs')
+    parser.add_argument('--temperature', type=float, default=0.5,
+                       help='Temperature for Gumbel Softmax (lower = sharper)')
+    parser.add_argument('--batch_size', type=int, default=64,
+                       help='Batch size for processing')
+    
+    args = parser.parse_args()
+    
+    run_generation(
+        config_path=args.config,
+        model_path=args.model_path,
+        output_path=args.output_path,
+        temperature=args.temperature,
+        batch_size=args.batch_size
+    )
 
 if __name__ == "__main__":
     main()
