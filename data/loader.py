@@ -21,6 +21,49 @@ def load_amazon(category='beauty', normalize_data=True, train=True):
 
     return data_clean
 
+def load_amazon_sequences(category='beauty'):
+    """
+    Load the processed Amazon dataset and return the user history sequences.
+    
+    Returns:
+        tuple: (sequences, num_users, num_items)
+            sequences: Dict containing 'train', 'eval', 'test' splits with history tensors
+            num_users: Total number of users
+            num_items: Total number of items
+    """
+    path = fr"dataset/amazon/processed/data_{category}.pt"
+    
+    if(not os.path.exists(path)):
+        AmazonReviews("dataset/amazon", split=category)
+    
+    content = torch.load(path, weights_only=False)
+    data = content[0] # unpacked from (data, slices, ...)
+    
+    # extract sequence data
+    sequences = data[("user", "rated", "item")]["history"]
+    
+    # infer num_items
+    if 'item' in data and 'x' in data['item']:
+        num_items = data['item']['x'].shape[0]
+    else:
+        num_items = 0
+        
+    # infer num_users from sequences
+    max_user_id = 0
+    for split in ['train', 'eval', 'test']:
+        if split in sequences and 'userId' in sequences[split]:
+            # check if it's a tensor or list
+            u_ids = sequences[split]['userId']
+            if isinstance(u_ids, torch.Tensor):
+                max_id = u_ids.max().item()
+            else:
+                max_id = max(u_ids) if len(u_ids) > 0 else 0
+            max_user_id = max(max_user_id, max_id)
+    
+    num_users = max_user_id + 1
+    
+    return sequences, num_users, num_items
+
 def load_movie_lens(category='1M', dimension="user", train=True, raw=True):
     # Build the file path
     sub_folder = "raw" if raw else "processed"
