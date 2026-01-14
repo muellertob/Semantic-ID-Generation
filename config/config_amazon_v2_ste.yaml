@@ -53,3 +53,4 @@ seq2seq:
   max_history_len: 20
   num_epochs: 100
   user_tokens: 2000
+  num_workers: 4
