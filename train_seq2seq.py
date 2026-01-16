@@ -13,6 +13,7 @@ from data.loader import load_amazon_sequences
 from data.sequence import SemanticIDSequenceDataset, collate_fn
 from utils.wandb import wandb_init
 from utils.model_id_generation import generate_model_id
+from utils.metrics import calculate_recall_at_k, calculate_ndcg_at_k
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -25,12 +26,14 @@ def save_checkpoint(model, optimizer, epoch, loss, path):
         'loss': loss,
     }, path)
 
-def evaluate(model, dataloader, device):
+def evaluate(model, dataloader, device, k_list=[5, 10]):
     """
     Evaluate the model on the validation set.
     """
     model.eval()
     total_loss = 0
+    total_recall = {k: 0.0 for k in k_list}
+    total_ndcg = {k: 0.0 for k in k_list}
     
     with torch.no_grad():
         for batch in tqdm(dataloader, desc="Evaluating"):
@@ -45,8 +48,28 @@ def evaluate(model, dataloader, device):
             )
             
             total_loss += outputs['loss'].item()
-    # TODO: Add Recall and NDCG
-    return total_loss / len(dataloader)
+            
+            # RETRIEVAL METRICS
+            # Use max K for beam size
+            max_k = max(k_list)
+            predictions = model.beam_search(
+                history_tuples=history_tuples,
+                user_ids=user_ids,
+                beam_size=max_k
+            )
+            
+            recall_results = calculate_recall_at_k(predictions, target_tuples, k_list)
+            ndcg_results = calculate_ndcg_at_k(predictions, target_tuples, k_list)
+            
+            for k in k_list:
+                total_recall[k] += recall_results[k]
+                total_ndcg[k] += ndcg_results[k]
+
+    avg_loss = total_loss / len(dataloader)
+    avg_recall = {k: v / len(dataloader) for k, v in total_recall.items()}
+    avg_ndcg = {k: v / len(dataloader) for k, v in total_ndcg.items()}
+    
+    return avg_loss, avg_recall, avg_ndcg
 
 def run_training(config_path, semantic_ids_path):
     """
@@ -175,21 +198,29 @@ def run_training(config_path, semantic_ids_path):
         avg_train_loss = total_loss / len(train_loader)
         
         # validation
-        avg_eval_loss = evaluate(model, eval_loader, device)
+        avg_eval_loss, avg_recall, avg_ndcg = evaluate(model, eval_loader, device)
         
         # update scheduler (ReduceLROnPlateau takes metric)
         scheduler.step(avg_eval_loss)
         current_lr = optimizer.param_groups[0]['lr']
         
         logger.info(f"Epoch {epoch+1}: Train Loss: {avg_train_loss:.4f} | Eval Loss: {avg_eval_loss:.4f} | LR: {current_lr:.6f}")
+        logger.info(f"Recall: {avg_recall} | NDCG: {avg_ndcg}")
         
         if config.general.use_wandb:
-            wandb.log({
+            wandb_log = {
                 "epoch": epoch, 
                 "train_loss": avg_train_loss,
                 "eval_loss": avg_eval_loss,
                 "learning_rate": current_lr
-            })
+            }
+            # Add metrics to wandb log
+            for k, v in avg_recall.items():
+                wandb_log[f"recall@{k}"] = v
+            for k, v in avg_ndcg.items():
+                wandb_log[f"ndcg@{k}"] = v
+            
+            wandb.log(wandb_log)
             
         # checkpoint and early stopping
         if avg_eval_loss < best_eval_loss:

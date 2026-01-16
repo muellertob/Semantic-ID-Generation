@@ -6,7 +6,7 @@ import pandas as pd
 from sentence_transformers import SentenceTransformer
 import torch
 
-def load_amazon(category='beauty', normalize_data=True, train=True):
+def load_amazon(category='beauty', normalize_data=True, split='train'):
     path = fr"dataset/amazon/processed/data_{category}.pt"
     
     if(not os.path.exists(path)):
@@ -17,7 +17,14 @@ def load_amazon(category='beauty', normalize_data=True, train=True):
     if normalize_data:
         data['item']['x'] = F.normalize(data['item']['x'], p=2, dim=1) # L2 norm across rows to align the magnitudes
         
-    data_clean = data['item']['x'][data['item']['is_train']== train]
+    if split == 'all':
+        data_clean = data['item']['x']
+    elif split == 'train':
+        data_clean = data['item']['x'][data['item']['is_train'] == True]
+    elif split == 'test':
+        data_clean = data['item']['x'][data['item']['is_train'] == False]
+    else:
+        raise ValueError(f"Invalid split: {split}. Must be 'train', 'test', or 'all'.")
 
     return data_clean
 

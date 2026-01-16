@@ -6,12 +6,13 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def load_data(config):
+def load_data(config, split='train'):
     """
     Load dataset based on configuration.
 
     Args:
         config: OmegaConf configuration object
+        split (str): Dataset split to load ('train', 'test', 'all').
 
     Returns:
         torch.Tensor: Loaded dataset
@@ -24,14 +25,14 @@ def load_data(config):
         data = load_movie_lens(
             category=config.data.category,
             dimension=config.data.embedding_dimension,
-            train=True,
+            train=True, # MovieLens loader ignores this parameter currently
             raw=True
         )
     elif config.data.dataset == "amazon":
         data = load_amazon(
             category=config.data.category,
             normalize_data=config.data.normalize_data,
-            train=True
+            split=split
         )
     elif config.data.dataset == "lastfm":
         raise NotImplementedError("LastFM dataset loading is not implemented yet.")

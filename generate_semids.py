@@ -98,22 +98,22 @@ def run_generation(config_path, model_path, output_path, temperature=0.5, batch_
     """
     Orchestrate semantic ID generation.
     """
-    # Load configuration
+    # load configuration
     config = OmegaConf.load(config_path)
     device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
     
     logger.info(f"Using device: {device}")
     
-    # Load all items data
-    data = load_data(config)
+    # load all items data
+    data = load_data(config, split='all')
     
-    logger.info(f"Loaded {len(data)} items with dimension {data.shape[1]}")
+    logger.info(f"Loaded {len(data)} all items with dimension {data.shape[1]}")
     
-    # Load trained model
+    # load trained model
     logger.info(f"Loading model from: {model_path}")
     model = load_trained_model(model_path, config, device, data.shape[1])
     
-    # Generate semantic IDs
+    # generate semantic IDs
     logger.info("Generating semantic IDs...")
     semids = generate_all_semids(
         model, data, device, 
@@ -123,12 +123,12 @@ def run_generation(config_path, model_path, output_path, temperature=0.5, batch_
     
     logger.info(f"Generated raw semantic IDs shape: {semids.shape}")
     
-    # Resolve Collisions (Add 4th token)
-    # Pass codebook_clusters as the limit for the collision token
+    # RESOLVE COLLISIONS (add 4th token)
+    # pass codebook_clusters as the limit for the collision token
     codebook_size = config.model.codebook_clusters
     final_semids = resolve_collisions(semids, max_collisions=codebook_size)
     
-    # Save results
+    # save results
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     torch.save({
         'semantic_ids': final_semids,
@@ -139,7 +139,7 @@ def run_generation(config_path, model_path, output_path, temperature=0.5, batch_
     
     logger.info(f"Semantic IDs saved to: {output_path}")
     
-    # Print some statistics
+    # print some statistics
     logger.info(f"Semantic ID statistics:")
     logger.info(f"  Shape: {final_semids.shape}")
     logger.info(f"  Min ID per layer: {final_semids.min(dim=0)[0]}")

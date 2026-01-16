@@ -26,7 +26,7 @@ def load_data(config):
         data = load_amazon(
                             category=config.data.category,
                             normalize_data=config.data.normalize_data,
-                            train=True)
+                            split='train')
     elif config.data.dataset == "lastfm":
         raise NotImplementedError("LastFM dataset loading is not implemented yet.")
     else:
