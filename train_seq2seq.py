@@ -143,6 +143,9 @@ def run_training(config_path, semantic_ids_path):
     )
     model.to(device)
     
+    # register the codebooks for constrained generation
+    model.set_codebooks(semantic_ids.to(device))
+    
     if config.general.use_wandb:
         wandb.watch(model, log="all")
 
