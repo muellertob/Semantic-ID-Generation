@@ -1,6 +1,9 @@
 import torch
 import torch.nn as nn
+import logging
 from transformers import T5Config, T5Model
+
+logger = logging.getLogger(__name__)
 
 class TigerSeq2Seq(nn.Module):
     def __init__(self, codebook_layers=3, codebook_size=256, user_tokens=2000, d_model=512, num_layers=4, num_heads=6, dropout=0.1, activation_fn="relu"):
@@ -62,6 +65,30 @@ class TigerSeq2Seq(nn.Module):
 
         # OUTPUT PROJECTION: maps hidden state back to vocab probabilities
         self.output_projection = nn.Linear(d_model, self.total_vocab, bias=False)
+        
+        # codebook buffer for constrained generation
+        # will be set via set_codebooks()
+        self.register_buffer('codebooks', None)
+
+    def set_codebooks(self, codebooks):
+        """
+        Registers the valid Semantic IDs for constrained generation.
+        Applies offsets to match the model's vocabulary space.
+        
+        :param codebooks: Tensor of shape [Num_Items, Codebook_Layers + 1] containing raw indices.
+        """
+        device = self.item_offsets.device
+        if codebooks.device != device:
+            codebooks = codebooks.to(device)
+            
+        # ensure dimensionality matches for broadcasting
+        # codebooks: [N, L]; item_offsets: [L]
+        if codebooks.shape[1] != self.item_offsets.shape[0]:
+             raise ValueError(f"Codebook shape {codebooks.shape} does not match item offsets shape {self.item_offsets.shape}")
+        
+        # apply offsets to raw codebook indices to match vocabulary   
+        shifted_codebooks = codebooks + self.item_offsets.unsqueeze(0)
+        self.register_buffer('codebooks', shifted_codebooks)
 
     def process_input_tuples(self, input_tuples, user_ids=None):
         """
@@ -181,7 +208,178 @@ class TigerSeq2Seq(nn.Module):
                 'encoder_last_hidden_state': outputs.last_hidden_state,
                 'encoder_attention_mask': encoder_attention_mask
             }
+
+    def _check_valid_prefix(self, prefix, batch_size=10000):
+        """
+        Checks if a given prefix is a valid prefix of the codebooks.
         
+        Args:
+            prefix: Tensor of shape [B, Hierarchy_Level] containing shifted token IDs.
+        Returns:
+            Boolean Tensor of shape [B]
+        """
+        # if no codebooks are set, we consider all prefixes as valid (unconstrained generation)
+        if self.codebooks is None:
+            return torch.ones(prefix.shape[0], dtype=torch.bool, device=prefix.device)
+            
+        current_hierarchy = prefix.shape[1]
+        num_prefixes = prefix.shape[0]
+        results = []
+        target_codebooks = self.codebooks
+        
+        # trim to current hierarchy depth
+        trimmed_codebooks = target_codebooks[:, :current_hierarchy]
+        
+        # process in batches to avoid OOM
+        for i in range(0, num_prefixes, batch_size):
+            batch_prefix = prefix[i:i+batch_size]
+            
+            # broadcasting comparison:
+            # batch_prefix: [B_chunk, H] -> [1, B_chunk, H]
+            # trimmed_codebooks: [N, H] -> [N, 1, H]
+            # result: [N, B_chunk, H]
+            comparison = (trimmed_codebooks.unsqueeze(1) == batch_prefix.unsqueeze(0))
+            
+            # check if ALL tokens in the prefix match a codebook entry
+            # [N, B_chunk]
+            match_per_codebook = comparison.all(dim=2)
+            
+            # check if ANY codebook entry matches this prefix
+            # [B_chunk]
+            is_valid = match_per_codebook.any(dim=0)
+            
+            results.append(is_valid)
+            
+        return torch.cat(results)
+
+    # CONTINUE HERE
+    @torch.no_grad()
+    def beam_search(self, history_tuples, user_ids=None, beam_size=10):
+        """
+        Generates candidates using (constrained) beam search.
+        If codebooks are set, applies hierarchy and prefix constraints.
+        
+        :param history_tuples: [batch, T, codebook_layers]
+        :param user_ids: [batch]
+        :param beam_size: int
+        :return: [batch, beam_size, codebook_layers + 1]
+        """
+        device = history_tuples.device
+        batch_size = history_tuples.size(0)
+        
+        # ENCODE the user history once
+        encoder_out = self.forward(history_tuples, target_tuples=None, user_ids=user_ids)
+        encoder_hidden_states = encoder_out['encoder_last_hidden_state']
+        encoder_attention_mask = encoder_out['encoder_attention_mask']
+
+        # duplicate encoder outputs for each beam
+        encoder_hidden_states = encoder_hidden_states.repeat_interleave(beam_size, dim=0)
+        encoder_attention_mask = encoder_attention_mask.repeat_interleave(beam_size, dim=0)
+
+        # INITIALIZE BEAM SEARCH VARIABLES
+        # every beam starts with BOS token
+        current_sequences = torch.full((batch_size * beam_size, 1), self.bos_idx, dtype=torch.long, device=device)
+        # first token is BOS, so initial score is 0 for the first token of each beam, and -inf for the rest
+        # this ensures that at the first step, only the first beam is expanded, thus avoiding duplicates of the same sequence
+        beam_scores = torch.full((batch_size * beam_size,), -1e9, device=device)
+        beam_scores[::beam_size] = 0
+
+        # GENERATION LOOP
+        if self.codebooks is not None:
+            total_steps = self.codebooks.shape[1]
+        else:
+            logger.warning("Codebooks not set! Running unconstrained beam search. Generated IDs may not exist.")
+            total_steps = self.codebook_layers + 1
+        
+        for step in range(total_steps):
+            outputs = self.backbone.decoder(
+                input_ids=current_sequences,
+                encoder_hidden_states=encoder_hidden_states,
+                encoder_attention_mask=encoder_attention_mask
+            )
+            
+            next_token_logits = self.output_projection(outputs.last_hidden_state[:, -1, :]) # shape: [B*K, Vocab]
+            
+            # OFFSET MASKING: enforce hierarchy by masking out invalid token ranges at each step
+            # step i -> tokens [offset[i], offset[i+1])
+            
+            # calculate start and end indices for valid tokens at this step
+            if step < self.codebook_layers:
+                 start_idx = self.item_offsets[step]
+                 end_idx = self.item_offsets[step+1]
+            else:
+                 # collision Step (last step)
+                 start_idx = self.item_offsets[-1]
+                 end_idx = start_idx + self.collision_vocab_size
+            
+            # create mask to set invalid token logits to -inf
+            vocab_mask = torch.full_like(next_token_logits, float('-inf'))
+            vocab_mask[:, start_idx:end_idx] = 0
+            
+            # APPLY PREFIX CONSTRAINTS (if codebooks are set)
+            # check if appending a candidate token creates a valid prefix
+            if self.codebooks is not None:
+                # get all candidate tokens for the current step (those within the vocab range)
+                candidate_tokens = torch.arange(start_idx, end_idx, device=device)
+                
+                # get history for each beam (exclude BOS)
+                # first step -> empty history with shape [B*K, 0]
+                history_no_bos = current_sequences[:, 1:] # [B*K, step]
+                
+                # repeat history for each candidate
+                expanded_history = history_no_bos.repeat_interleave(candidate_tokens.shape[0], dim=0) # [B*K * candidate_tokens, step]
+                
+                # create matching column of candidate tokens to append to expanded history
+                tiled_candidates = candidate_tokens.repeat(history_no_bos.shape[0]).unsqueeze(1) # [B*K * candidate_tokens, 1]
+                
+                # concatenate to form new prefixes to check
+                prefixes_to_check = torch.cat([expanded_history, tiled_candidates], dim=1)
+                
+                # check validity
+                is_valid = self._check_valid_prefix(prefixes_to_check) # [B*K * candidate_tokens]
+                
+                # reshape back to [B*K, candidate_tokens]
+                validity_mask = is_valid.view(history_no_bos.shape[0], candidate_tokens.shape[0])
+                
+                # APPLY THE VALIDITY MASK
+                # create a local mask for the constrained range
+                local_mask = torch.full_like(validity_mask, float('-inf'), dtype=next_token_logits.dtype)
+                local_mask[validity_mask] = 0
+                
+                # add to the global vocab mask slice
+                vocab_mask[:, start_idx:end_idx] += local_mask
+
+            # apply mask and calculate candidate scores
+            log_probs = torch.nn.functional.log_softmax(next_token_logits + vocab_mask, dim=-1)
+            
+            candidate_scores = beam_scores.unsqueeze(1) + log_probs # [B*K, Vocab]
+            candidate_scores = candidate_scores.view(batch_size, -1) # [B, K*Vocab]
+            
+            # get top-k candidates across all beams and vocab
+            topk_scores, topk_indices = torch.topk(candidate_scores, k=beam_size, dim=1)
+            
+            # resolve indices
+            beam_indices = topk_indices // self.total_vocab # [B, K] - which beam in the group
+            token_indices = topk_indices % self.total_vocab # [B, K] - which token
+            
+            # update scores
+            beam_scores = topk_scores.view(-1) # [B*K]
+            
+            # UPDATE SEQUENCES
+            # multiply batch offsets to get global beam indices
+            batch_offsets = torch.arange(batch_size, device=device).unsqueeze(1) * beam_size # [B, 1]
+            global_beam_indices = (batch_offsets + beam_indices).view(-1) # [B*K]
+            
+            # select the sequences corresponding to the chosen beams and append the new tokens
+            selected_sequences = current_sequences[global_beam_indices] # [B*K, current_len]
+            new_tokens = token_indices.view(-1, 1) # [B*K, 1]
+            current_sequences = torch.cat([selected_sequences, new_tokens], dim=1)
+            
+        # remove BOS and reshape
+        predictions = current_sequences[:, 1:].view(batch_size, beam_size, total_steps)
+        
+        return predictions
+
     @torch.no_grad()
     def generate(self, history_tuples, user_ids=None, num_items_to_generate=5):
         """

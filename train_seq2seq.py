@@ -50,7 +50,7 @@ def evaluate(model, dataloader, device, k_list=[5, 10]):
             total_loss += outputs['loss'].item()
             
             # RETRIEVAL METRICS
-            # Use max K for beam size
+            # use max K for beam size
             max_k = max(k_list)
             predictions = model.beam_search(
                 history_tuples=history_tuples,
@@ -214,7 +214,7 @@ def run_training(config_path, semantic_ids_path):
                 "eval_loss": avg_eval_loss,
                 "learning_rate": current_lr
             }
-            # Add metrics to wandb log
+            # add metrics to wandb log
             for k, v in avg_recall.items():
                 wandb_log[f"recall@{k}"] = v
             for k, v in avg_ndcg.items():
