@@ -73,11 +73,11 @@ class AmazonReviews(InMemoryDataset, PreprocessingMixin):
                 items = [self._remap_ids(id) for id in parsed_line[1:]]
                 
                 # TRAIN SPLIT
-                # all but last two items
+                # all but last three items
                 # note: we store the full un-padded sequence for training flexibility.
-                train_items = items[:-2]
+                train_items = items[:-3]
                 sequences["train"]["itemId"].append(train_items) # as stated in TIGER: we will only train on this
-                sequences["train"]["itemId_fut"].append(items[-2])
+                sequences["train"]["itemId_fut"].append(items[-3])
                 
                 # EVAL SPLIT
                 # window sequence with second last item as target

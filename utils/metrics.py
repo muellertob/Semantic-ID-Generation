@@ -34,6 +34,7 @@ def calculate_recall_at_k(predictions, targets, k_list=[5, 10]):
                 
     for k in k_list:
         results[k] /= batch_size
+        results[k] = float(results[k])
         
     return results
 
@@ -72,5 +73,6 @@ def calculate_ndcg_at_k(predictions, targets, k_list=[5, 10]):
                 
     for k in k_list:
         results[k] /= batch_size
+        results[k] = float(results[k])
         
     return results

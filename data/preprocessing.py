@@ -42,7 +42,7 @@ class PreprocessingMixin:
         device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
         if model is None:
             model = SentenceTransformer('sentence-transformers/sentence-t5-xl', device=device)
-        embeddings = model.encode(sentences=text_feat, show_progress_bar=True, convert_to_tensor=True).cpu()
+        embeddings = model.encode(sentences=text_feat, show_progress_bar=True, convert_to_tensor=True, batch_size=8).cpu()
         return embeddings
     
     @staticmethod

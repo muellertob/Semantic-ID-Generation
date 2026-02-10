@@ -1,0 +1,59 @@
+# data loader configuration
+data:
+  dataset: "amazon"
+  batch_size: 256
+  normalize_data: False
+  category: "beauty"
+
+# model configuration (RQ-VAE)
+model:
+  input_dimension: 768
+  hidden_dimensions: [768, 512, 256]
+  latent_dimension: 256
+  num_codebook_layers: 3
+  codebook_clusters: 128
+  commitment_weight: 0.15
+  quantization_method: "gumbel_softmax"
+
+# training configuration (RQ-VAE)
+train:
+  seed: 10
+  learning_rate: 1e-3
+  weight_decay: 1e-4
+  num_epochs: 256
+  temperature_annealing: True
+  temperature_update_frequency: 1
+  annealing_schedule: "cosine"
+  temperature: 1.0
+  min_temperature: 0.5
+  temperature_decay: 0.995
+
+# additional configuration
+general:
+  use_wandb: True
+  wandb_project: "mt-amazon"
+  wandb_entity: "tobias-mueller99-johannes-kepler-universit-t-linz"
+  save_model: True
+
+# seq2seq configuration (TIGER paper implementation)
+seq2seq:
+  d_model: 128
+  d_kv: 64
+  d_ff: 1024
+  num_layers: 4
+  num_heads: 6
+  dropout: 0.1
+  activation_fn: "relu"
+  
+  # optimization
+  learning_rate: 0.01
+  batch_size: 256
+  
+  # data
+  max_history_len: 20
+  user_tokens: 2000
+  
+  # training loop
+  num_epochs: 2300 # ~200k steps with ~88 steps/epoch (22k users / 256 batch)
+  warmup_steps: 10000 # "0.01 for the first 10k steps"
+  num_workers: 4
