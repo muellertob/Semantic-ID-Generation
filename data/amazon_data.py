@@ -60,7 +60,14 @@ class AmazonReviews(InMemoryDataset, PreprocessingMixin):
         os.rename(folder, self.raw_dir)
     
     def _remap_ids(self, x):
-        return x - 1
+        """
+        Maps original 1-based P5 IDs to new 0-based IDs.
+        If self.id_permutation is set, it uses a random mapping to avoid leakage.
+        """
+        original_idx = int(x) - 1
+        if hasattr(self, 'id_permutation'):
+            return self.id_permutation[original_idx].item()
+        return original_idx
 
     def train_test_split(self, max_seq_len=20):
         splits = ["train", "eval", "test"]
@@ -69,14 +76,19 @@ class AmazonReviews(InMemoryDataset, PreprocessingMixin):
         with open(os.path.join(self.raw_dir, self.split, "sequential_data.txt"), "r") as f:
             for line in f:
                 parsed_line = list(map(int, line.strip().split()))
-                user_ids.append(parsed_line[0])
                 items = [self._remap_ids(id) for id in parsed_line[1:]]
+                
+                # filter out users with less than 5 reviews
+                if len(items) < 5:
+                    continue
+                
+                user_ids.append(parsed_line[0])
                 
                 # TRAIN SPLIT
                 # all but last three items
                 # note: we store the full un-padded sequence for training flexibility.
                 train_items = items[:-3]
-                sequences["train"]["itemId"].append(train_items) # as stated in TIGER: we will only train on this
+                sequences["train"]["itemId"].append(train_items)
                 sequences["train"]["itemId_fut"].append(items[-3])
                 
                 # EVAL SPLIT
@@ -101,6 +113,15 @@ class AmazonReviews(InMemoryDataset, PreprocessingMixin):
 
         with open(os.path.join(self.raw_dir, self.split, "datamaps.json"), 'r') as f:
             data_maps = json.load(f)    
+
+        # generate a deterministic random permutation to avoid ID leakage.
+        num_items = len(data_maps["item2id"])
+        gen = torch.Generator()
+        gen.manual_seed(42)
+        self.id_permutation = torch.randperm(num_items, generator=gen)
+
+        # save the permutation to the data object for future reference/inference
+        data["item"].id_permutation = self.id_permutation
 
         # Construct user sequences
         sequences = self.train_test_split(max_seq_len=max_seq_len)
