@@ -1,78 +1,76 @@
 import torch
 import numpy as np
 
-def calculate_recall_at_k(predictions, targets, k_list=[5, 10]):
+class MetricAccumulator:
     """
-    Calculates Recall@K.
-    
-    Args:
-        predictions (torch.Tensor): Tensor of shape [Batch, Beam_Size, Codebook_Layers] 
-                                    containing generated semantic IDs.
-        targets (torch.Tensor): Tensor of shape [Batch, 1, Codebook_Layers] 
-                                containing ground truth semantic IDs.
-        k_list (list): List of K values to calculate Recall for.
-        
-    Returns:
-        dict: Dictionary mapping k to Recall@k value.
+    Accumulates retrieval metrics across multiple batches for accurate averaging,
+    including hierarchical metrics for each slice of the target sequence.
     """
-    batch_size = targets.size(0)
-    results = {k: 0.0 for k in k_list}
-    
-    # convert tensors to lists of tuples for easier comparison
-    targets_list = [tuple(t.tolist()) for t in targets.squeeze(1)]
-    
-    for i in range(batch_size):
-        target_tuple = targets_list[i]
-        
-        # get top max(k) predictions
-        max_k = max(k_list)
-        pred_tuples = [tuple(p.tolist()) for p in predictions[i][:max_k]]
-        
-        for k in k_list:
-            if target_tuple in pred_tuples[:k]:
-                results[k] += 1.0
-                
-    for k in k_list:
-        results[k] /= batch_size
-        results[k] = float(results[k])
-        
-    return results
+    def __init__(self, k_list=[1, 5, 10], num_layers=4):
+        self.k_list = k_list
+        self.num_layers = num_layers
+        self.reset()
 
-def calculate_ndcg_at_k(predictions, targets, k_list=[5, 10]):
-    """
-    Calculates NDCG@K.
-    
-    Args:
-        predictions (torch.Tensor): Tensor of shape [Batch, Beam_Size, Codebook_Layers]
-        targets (torch.Tensor): Tensor of shape [Batch, 1, Codebook_Layers]
-        k_list (list): List of K values.
+    def reset(self):
+        self.total_samples = 0
+        self.total_recall = {k: 0.0 for k in self.k_list}
+        self.total_ndcg = {k: 0.0 for k in self.k_list}
         
-    Returns:
-        dict: Dictionary mapping k to NDCG@k value.
-    """
-    batch_size = targets.size(0)
-    results = {k: 0.0 for k in k_list}
-    
-    targets_list = [tuple(t.tolist()) for t in targets.squeeze(1)]
-    
-    for i in range(batch_size):
-        target_tuple = targets_list[i]
-        max_k = max(k_list)
-        pred_tuples = [tuple(p.tolist()) for p in predictions[i][:max_k]]
+        # Hierarchical metrics
+        self.hierarchical_recall = {f"h@{k}_slice_{i}": 0.0 for k in self.k_list for i in range(1, self.num_layers + 1)}
+
+    def update(self, predictions, targets):
+        """
+        Update the accumulator with results from a new batch.
         
-        for k in k_list:
-            current_preds = pred_tuples[:k]
-            if target_tuple in current_preds:
-                rank = current_preds.index(target_tuple) + 1
-                dcg = 1.0 / np.log2(rank + 1)
-                # IDCG is always 1.0 because we have only one relevant item
-                ndcg = dcg
-                results[k] += ndcg
-            else:
-                results[k] += 0.0
+        Args:
+            predictions (torch.Tensor): [Batch, Beam_Size, Codebook_Layers]
+            targets (torch.Tensor): [Batch, 1, Codebook_Layers] or [Batch, Codebook_Layers]
+        """
+        batch_size = targets.size(0)
+        self.total_samples += batch_size
+
+        # normalize targets to [Batch, Codebook_Layers]
+        if targets.dim() == 3:
+            targets = targets.squeeze(1)
+
+        # convert tensors to lists of tuples for easier comparison
+        targets_list = [tuple(t.tolist()) for t in targets]
+        
+        for i in range(batch_size):
+            target_tuple = targets_list[i]
+            # get top max(k) predictions
+            max_k = max(self.k_list)
+            pred_tuples = [tuple(p.tolist()) for p in predictions[i][:max_k]]
+            
+            for k in self.k_list:
+                current_preds = pred_tuples[:k]
                 
-    for k in k_list:
-        results[k] /= batch_size
-        results[k] = float(results[k])
-        
-    return results
+                # Check for exact full match
+                if target_tuple in current_preds:
+                    self.total_recall[k] += 1.0
+                    rank = current_preds.index(target_tuple) + 1
+                    self.total_ndcg[k] += 1.0 / np.log2(rank + 1)
+                
+                # Hierarchical checks
+                for layer in range(1, self.num_layers + 1):
+                    target_slice = target_tuple[:layer]
+                    pred_slices = [p[:layer] for p in current_preds]
+                    if target_slice in pred_slices:
+                        self.hierarchical_recall[f"h@{k}_slice_{layer}"] += 1.0
+
+    def compute(self):
+        """Returns the final averaged metrics."""
+        if self.total_samples == 0:
+            return {
+                "recall": {k: 0.0 for k in self.k_list}, 
+                "ndcg": {k: 0.0 for k in self.k_list},
+                "hierarchical": {k: 0.0 for k in self.hierarchical_recall.keys()}
+            }
+            
+        return {
+            "recall": {k: float(v / self.total_samples) for k, v in self.total_recall.items()},
+            "ndcg": {k: float(v / self.total_samples) for k, v in self.total_ndcg.items()},
+            "hierarchical": {k: float(v / self.total_samples) for k, v in self.hierarchical_recall.items()},
+            "total_samples": self.total_samples
+        }
