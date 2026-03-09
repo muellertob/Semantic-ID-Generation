@@ -15,8 +15,6 @@ class MetricAccumulator:
         self.total_samples = 0
         self.total_recall = {k: 0.0 for k in self.k_list}
         self.total_ndcg = {k: 0.0 for k in self.k_list}
-        
-        # Hierarchical metrics
         self.hierarchical_recall = {f"h@{k}_slice_{i}": 0.0 for k in self.k_list for i in range(1, self.num_layers + 1)}
 
     def update(self, predictions, targets):
@@ -39,20 +37,19 @@ class MetricAccumulator:
         
         for i in range(batch_size):
             target_tuple = targets_list[i]
-            # get top max(k) predictions
             max_k = max(self.k_list)
             pred_tuples = [tuple(p.tolist()) for p in predictions[i][:max_k]]
             
             for k in self.k_list:
                 current_preds = pred_tuples[:k]
                 
-                # Check for exact full match
+                # check for exact full match
                 if target_tuple in current_preds:
                     self.total_recall[k] += 1.0
                     rank = current_preds.index(target_tuple) + 1
                     self.total_ndcg[k] += 1.0 / np.log2(rank + 1)
                 
-                # Hierarchical checks
+                # check slices for partial matches
                 for layer in range(1, self.num_layers + 1):
                     target_slice = target_tuple[:layer]
                     pred_slices = [p[:layer] for p in current_preds]
