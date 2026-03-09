@@ -10,6 +10,7 @@ models
 plots
 outputs
 notebooks
+tests
 
 ok_models/
 
@@ -18,7 +19,5 @@ wandb/
 hyperopt_results/
 
 debug*
-
-*test*
 
 GEMINI.md
