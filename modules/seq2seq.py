@@ -6,7 +6,7 @@ from transformers import T5Config, T5Model
 logger = logging.getLogger(__name__)
 
 class TigerSeq2Seq(nn.Module):
-    def __init__(self, codebook_layers=3, codebook_size=256, user_tokens=2000, d_model=512, num_layers=4, num_heads=6, dropout=0.1, activation_fn="relu"):
+    def __init__(self, codebook_layers=3, codebook_size=256, user_tokens=2000, d_model=512, d_kv=64, d_ff=2048, num_layers=4, num_heads=6, dropout=0.1, activation_fn="relu"):
         super().__init__()
         self.codebook_layers = codebook_layers
         self.codebook_size = codebook_size
@@ -16,15 +16,18 @@ class TigerSeq2Seq(nn.Module):
         self.collision_vocab_size = codebook_size # additional tokens for ID collisions
         self.user_vocab_size = user_tokens
 
-        self.total_vocab = (self.semantic_vocab_size + 
-                            self.collision_vocab_size + 
-                            self.user_vocab_size + 
-                            3)
+        # only semantic, collision, and special tokens can be output by the decoder
+        self.output_vocab_size = (self.semantic_vocab_size + 
+                                  self.collision_vocab_size + 
+                                  3)
         
-        # set special token indices
-        self.pad_idx = self.total_vocab - 3
-        self.bos_idx = self.total_vocab - 2
-        self.eos_idx = self.total_vocab - 1
+        # total vocab includes user tokens for the shared embedding space
+        self.total_vocab = self.output_vocab_size + self.user_vocab_size
+        
+        # set special token indices (placed directly after collision tokens)
+        self.pad_idx = self.output_vocab_size - 3
+        self.bos_idx = self.output_vocab_size - 2
+        self.eos_idx = self.output_vocab_size - 1
 
         # OFFSETS: shift tokens to avoid overlaps in the shared embedding space
         semantic_offsets = torch.arange(0, codebook_layers * codebook_size, step=codebook_size)
@@ -37,19 +40,19 @@ class TigerSeq2Seq(nn.Module):
         # collision tokens start after semantic tokens
         self.collision_offset = self.semantic_vocab_size
 
-        # user tokens start after semantic + collision tokens
-        self.user_offset = self.semantic_vocab_size + self.collision_vocab_size
+        # user tokens start after the output vocab
+        self.user_offset = self.output_vocab_size
 
         # LOSS FUNCTION
-        self.loss_fct = nn.CrossEntropyLoss(ignore_index=self.pad_idx)
+        self.loss_fct = nn.CrossEntropyLoss(ignore_index=self.pad_idx, reduction='none')
 
         # TRANSFORMER MODEL
         # using T5 as the backbone seq2seq model like in the original TIGER paper
         config = T5Config(
             vocab_size=self.total_vocab,
             d_model=d_model,                    # TIGER: 128 (Input Dimension)
-            d_kv=d_model // 8,                  # TIGER: 64
-            d_ff=d_model * 4,                   # TIGER: 1024 (MLP Dimension)
+            d_kv=d_kv,                          # TIGER: 64
+            d_ff=d_ff,                          # TIGER: 1024 (MLP Dimension)
             num_layers=num_layers,              # TIGER: 4 layers for both encoder and decoder
             num_decoder_layers=num_layers,
             num_heads=num_heads,                # TIGER: 6 self-attention heads
@@ -63,12 +66,70 @@ class TigerSeq2Seq(nn.Module):
 
         self.backbone = T5Model(config)
 
-        # OUTPUT PROJECTION: maps hidden state back to vocab probabilities
-        self.output_projection = nn.Linear(d_model, self.total_vocab, bias=False)
+        # OUTPUT PROJECTION: maps hidden state back to output vocab probabilities
+        self.output_projection = nn.Linear(d_model, self.output_vocab_size, bias=False)
         
         # codebook buffer for constrained generation
         # will be set via set_codebooks()
         self.register_buffer('codebooks', None)
+        
+        # trie buffers
+        self.register_buffer('trie_transitions', None) # [Nodes, Vocab] -> Next Node
+        self.register_buffer('trie_masks', None)       # [Nodes, Vocab] -> Allowed Logit Mask
+
+    def build_trie(self, codebooks):
+        """
+        Builds a prefix tree (Trie) from the valid codebooks and registers 
+        vectorized transition and mask tables for fast lookups.
+        
+        :param codebooks: Tensor of shape [Num_Items, Codebook_Layers + 1] containing shifted token IDs.
+        """
+        logger.info(f"Building Trie Index for {len(codebooks)} items...")
+        
+        # initialize Trie with root node
+        trie = [{'children': {}, 'parent': -1, 'value': -1}]
+        codebook_list = codebooks.cpu().tolist()
+        
+        # iterate through each codebook sequence and insert into the trie
+        for seq in codebook_list:
+            # start at the root for each sequence
+            current_node = 0
+            for token in seq:
+                # check if the token already exists as a child of the current node
+                if token not in trie[current_node]['children']:
+                    new_node_idx = len(trie)
+                    # append new node to the trie with parent and value information
+                    trie.append({'children': {}, 'parent': current_node, 'value': token})
+                    # link the current node to the new node via the token
+                    trie[current_node]['children'][token] = new_node_idx
+                # move to the child node for the next token
+                current_node = trie[current_node]['children'][token]
+                
+        num_nodes = len(trie)
+        # allocate one extra node for the "sink" state to handle invalid transitions safely
+        sink_node = num_nodes
+        total_nodes = num_nodes + 1
+        
+        logger.info(f"Trie built with {num_nodes} valid nodes and 1 sink node.")
+        
+        # convert to dense tensor tables
+        # initialize with sink_node (invalid state traps here)
+        # NOTE: replace with sparse representation if memory becomes an issue with large codebooks
+        transition_tensor = torch.full((total_nodes, self.output_vocab_size), sink_node, dtype=torch.int32)
+        # initialize mask with False (invalid token)
+        mask_tensor = torch.zeros((total_nodes, self.output_vocab_size), dtype=torch.bool)
+        
+        # populate the matrices
+        for i, node in enumerate(trie):
+            for token, child_idx in node['children'].items():
+                if token < self.output_vocab_size:
+                    transition_tensor[i, token] = child_idx
+                    mask_tensor[i, token] = True
+                    
+        # register buffers (will be saved alongside parameters and moved to device with the model)
+        device = self.item_offsets.device
+        self.register_buffer('trie_transitions', transition_tensor.to(device=device))
+        self.register_buffer('trie_masks', mask_tensor.to(device=device))
 
     def set_codebooks(self, codebooks):
         """
@@ -79,7 +140,7 @@ class TigerSeq2Seq(nn.Module):
         """
         device = self.item_offsets.device
         if codebooks.device != device:
-            codebooks = codebooks.to(device)
+            codebooks = codebooks.to(device=device)
             
         # ensure dimensionality matches for broadcasting
         # codebooks: [N, L]; item_offsets: [L]
@@ -89,6 +150,9 @@ class TigerSeq2Seq(nn.Module):
         # apply offsets to raw codebook indices to match vocabulary   
         shifted_codebooks = codebooks + self.item_offsets.unsqueeze(0)
         self.register_buffer('codebooks', shifted_codebooks)
+        
+        # build the Trie index for fast constrained generation
+        self.build_trie(shifted_codebooks)
 
     def process_input_tuples(self, input_tuples, user_ids=None):
         """
@@ -190,12 +254,18 @@ class TigerSeq2Seq(nn.Module):
             # shift logits to exclude last time step for where there is no next token
             prediction_logits = logits[:, :-1, :].contiguous()
 
-            loss = self.loss_fct(
-                prediction_logits.view(-1, self.total_vocab),
+            unreduced_loss = self.loss_fct(
+                prediction_logits.view(-1, self.output_vocab_size),
                 raw_target_ids.view(-1)
             )
+            
+            # reshape back to [Batch, SeqLen]
+            unreduced_loss = unreduced_loss.view(batch_size, -1)
+            
+            # sum over the sequence (dim=1), mean over the batch (dim=0)
+            loss = unreduced_loss.sum(dim=1).mean()
 
-            return {'loss': loss, 'logits': logits}
+            return {'loss': loss, 'logits': logits, 'unreduced_loss': unreduced_loss}
         
         else:
             # INFERENCE MODE
@@ -209,59 +279,16 @@ class TigerSeq2Seq(nn.Module):
                 'encoder_attention_mask': encoder_attention_mask
             }
 
-    def _check_valid_prefix(self, prefix, batch_size=10000):
-        """
-        Checks if a given prefix is a valid prefix of the codebooks.
-        
-        Args:
-            prefix: Tensor of shape [B, Hierarchy_Level] containing shifted token IDs.
-        Returns:
-            Boolean Tensor of shape [B]
-        """
-        # if no codebooks are set, we consider all prefixes as valid (unconstrained generation)
-        if self.codebooks is None:
-            return torch.ones(prefix.shape[0], dtype=torch.bool, device=prefix.device)
-            
-        current_hierarchy = prefix.shape[1]
-        num_prefixes = prefix.shape[0]
-        results = []
-        target_codebooks = self.codebooks
-        
-        # trim to current hierarchy depth
-        trimmed_codebooks = target_codebooks[:, :current_hierarchy]
-        
-        # process in batches to avoid OOM
-        for i in range(0, num_prefixes, batch_size):
-            batch_prefix = prefix[i:i+batch_size]
-            
-            # broadcasting comparison:
-            # batch_prefix: [B_chunk, H] -> [1, B_chunk, H]
-            # trimmed_codebooks: [N, H] -> [N, 1, H]
-            # result: [N, B_chunk, H]
-            comparison = (trimmed_codebooks.unsqueeze(1) == batch_prefix.unsqueeze(0))
-            
-            # check if ALL tokens in the prefix match a codebook entry
-            # [N, B_chunk]
-            match_per_codebook = comparison.all(dim=2)
-            
-            # check if ANY codebook entry matches this prefix
-            # [B_chunk]
-            is_valid = match_per_codebook.any(dim=0)
-            
-            results.append(is_valid)
-            
-        return torch.cat(results)
-
-    # CONTINUE HERE
     @torch.no_grad()
-    def beam_search(self, history_tuples, user_ids=None, beam_size=10):
+    def beam_search(self, history_tuples, user_ids=None, beam_size=10, constrained=True):
         """
-        Generates candidates using (constrained) beam search.
-        If codebooks are set, applies hierarchy and prefix constraints.
+        Generates candidates using beam search.
+        If constrained=True and codebooks are set, applies hierarchy and prefix constraints using the Trie index.
         
         :param history_tuples: [batch, T, codebook_layers]
         :param user_ids: [batch]
         :param beam_size: int
+        :param constrained: bool, whether to apply Trie constraints
         :return: [batch, beam_size, codebook_layers + 1]
         """
         device = history_tuples.device
@@ -279,79 +306,61 @@ class TigerSeq2Seq(nn.Module):
         # INITIALIZE BEAM SEARCH VARIABLES
         # every beam starts with BOS token
         current_sequences = torch.full((batch_size * beam_size, 1), self.bos_idx, dtype=torch.long, device=device)
-        # first token is BOS, so initial score is 0 for the first token of each beam, and -inf for the rest
+        
+        # initialize beam scores with -inf except for the first beam of each batch which starts at 0
         # this ensures that at the first step, only the first beam is expanded, thus avoiding duplicates of the same sequence
         beam_scores = torch.full((batch_size * beam_size,), -1e9, device=device)
         beam_scores[::beam_size] = 0
+
+        # TRIE STATE INITIALIZATION
+        # start at root (node 0) for all beams
+        current_trie_nodes = torch.zeros(batch_size * beam_size, dtype=torch.long, device=device)
+
+        # KV-CACHE INITIALIZATION
+        past_key_values = None
 
         # GENERATION LOOP
         if self.codebooks is not None:
             total_steps = self.codebooks.shape[1]
         else:
-            logger.warning("Codebooks not set! Running unconstrained beam search. Generated IDs may not exist.")
+            if constrained:
+                logger.warning("Codebooks not set! Running unconstrained beam search.")
+                constrained = False
             total_steps = self.codebook_layers + 1
         
         for step in range(total_steps):
+            # prepare input
+            # only use the last token if we have cached past_key_values
+            if past_key_values is not None:
+                decoder_input_ids = current_sequences[:, -1:]
+            else:
+                decoder_input_ids = current_sequences
+
             outputs = self.backbone.decoder(
-                input_ids=current_sequences,
+                input_ids=decoder_input_ids,
                 encoder_hidden_states=encoder_hidden_states,
-                encoder_attention_mask=encoder_attention_mask
+                encoder_attention_mask=encoder_attention_mask,
+                past_key_values=past_key_values,
+                use_cache=True
             )
             
+            # update cache
+            past_key_values = outputs.past_key_values
+
             next_token_logits = self.output_projection(outputs.last_hidden_state[:, -1, :]) # shape: [B*K, Vocab]
             
-            # OFFSET MASKING: enforce hierarchy by masking out invalid token ranges at each step
-            # step i -> tokens [offset[i], offset[i+1])
+            # LOG PROBS AND CONSTRAINED DECODING (TRIE LOOKUP)
+            # compute raw log probabilities first to avoid NaN from purely -inf inputs
+            log_probs = torch.nn.functional.log_softmax(next_token_logits, dim=-1)
             
-            # calculate start and end indices for valid tokens at this step
-            if step < self.codebook_layers:
-                 start_idx = self.item_offsets[step]
-                 end_idx = self.item_offsets[step+1]
-            else:
-                 # collision Step (last step)
-                 start_idx = self.item_offsets[-1]
-                 end_idx = start_idx + self.collision_vocab_size
-            
-            # create mask to set invalid token logits to -inf
-            vocab_mask = torch.full_like(next_token_logits, float('-inf'))
-            vocab_mask[:, start_idx:end_idx] = 0
-            
-            # APPLY PREFIX CONSTRAINTS (if codebooks are set)
-            # check if appending a candidate token creates a valid prefix
-            if self.codebooks is not None:
-                # get all candidate tokens for the current step (those within the vocab range)
-                candidate_tokens = torch.arange(start_idx, end_idx, device=device)
+            if constrained and self.trie_masks is not None:
+                # get valid token mask for current state of each beam (boolean mask)
+                valid_token_mask = self.trie_masks[current_trie_nodes] # shape: [B*K, Vocab]
                 
-                # get history for each beam (exclude BOS)
-                # first step -> empty history with shape [B*K, 0]
-                history_no_bos = current_sequences[:, 1:] # [B*K, step]
-                
-                # repeat history for each candidate
-                expanded_history = history_no_bos.repeat_interleave(candidate_tokens.shape[0], dim=0) # [B*K * candidate_tokens, step]
-                
-                # create matching column of candidate tokens to append to expanded history
-                tiled_candidates = candidate_tokens.repeat(history_no_bos.shape[0]).unsqueeze(1) # [B*K * candidate_tokens, 1]
-                
-                # concatenate to form new prefixes to check
-                prefixes_to_check = torch.cat([expanded_history, tiled_candidates], dim=1)
-                
-                # check validity
-                is_valid = self._check_valid_prefix(prefixes_to_check) # [B*K * candidate_tokens]
-                
-                # reshape back to [B*K, candidate_tokens]
-                validity_mask = is_valid.view(history_no_bos.shape[0], candidate_tokens.shape[0])
-                
-                # APPLY THE VALIDITY MASK
-                # create a local mask for the constrained range
-                local_mask = torch.full_like(validity_mask, float('-inf'), dtype=next_token_logits.dtype)
-                local_mask[validity_mask] = 0
-                
-                # add to the global vocab mask slice
-                vocab_mask[:, start_idx:end_idx] += local_mask
+                # mask invalid paths with -inf
+                log_probs = torch.where(valid_token_mask, log_probs, float('-inf'))
 
-            # apply mask and calculate candidate scores
-            log_probs = torch.nn.functional.log_softmax(next_token_logits + vocab_mask, dim=-1)
-            
+            # BEAM EXPANSION
             candidate_scores = beam_scores.unsqueeze(1) + log_probs # [B*K, Vocab]
             candidate_scores = candidate_scores.view(batch_size, -1) # [B, K*Vocab]
             
@@ -359,21 +368,38 @@ class TigerSeq2Seq(nn.Module):
             topk_scores, topk_indices = torch.topk(candidate_scores, k=beam_size, dim=1)
             
             # resolve indices
-            beam_indices = topk_indices // self.total_vocab # [B, K] - which beam in the group
-            token_indices = topk_indices % self.total_vocab # [B, K] - which token
+            beam_indices = topk_indices // self.output_vocab_size # [B, K] - which beam in the group
+            token_indices = topk_indices % self.output_vocab_size # [B, K] - which token
             
             # update scores
             beam_scores = topk_scores.view(-1) # [B*K]
             
-            # UPDATE SEQUENCES
+            # UPDATE SEQUENCES & STATE
             # multiply batch offsets to get global beam indices
             batch_offsets = torch.arange(batch_size, device=device).unsqueeze(1) * beam_size # [B, 1]
             global_beam_indices = (batch_offsets + beam_indices).view(-1) # [B*K]
             
-            # select the sequences corresponding to the chosen beams and append the new tokens
+            # select the sequences corresponding to the chosen beams
             selected_sequences = current_sequences[global_beam_indices] # [B*K, current_len]
             new_tokens = token_indices.view(-1, 1) # [B*K, 1]
             current_sequences = torch.cat([selected_sequences, new_tokens], dim=1)
+            
+            # update Trie state (transition to next node)
+            if constrained and self.trie_transitions is not None:
+                selected_nodes = current_trie_nodes[global_beam_indices] # [B*K]
+                chosen_tokens_flat = token_indices.view(-1) # [B*K]
+                
+                # lookup next state
+                # indices: [row=selected_nodes, col=chosen_tokens_flat]
+                current_trie_nodes = self.trie_transitions[selected_nodes, chosen_tokens_flat].long()
+            
+            # REORDER CACHE
+            # makes sure that the past_key_values are correctly aligned with the new beam order after selection
+            if past_key_values is not None:
+                if hasattr(self.backbone.decoder, '_reorder_cache'):
+                    past_key_values = self.backbone.decoder._reorder_cache(past_key_values, global_beam_indices)
+                elif hasattr(past_key_values, 'reorder_cache'):
+                    past_key_values.reorder_cache(global_beam_indices)
             
         # remove BOS and reshape
         predictions = current_sequences[:, 1:].view(batch_size, beam_size, total_steps)
@@ -381,13 +407,16 @@ class TigerSeq2Seq(nn.Module):
         return predictions
 
     @torch.no_grad()
-    def generate(self, history_tuples, user_ids=None, num_items_to_generate=5):
+    def generate(self, history_tuples, user_ids=None, num_items_to_generate=5, constrained=True):
         """
         Generates a sequence of recommended items using greedy decoding.
+        If constrained=True, it follows the Trie to guarantee valid item IDs, 
+        resetting state at item boundaries.
 
         :param history_tuples: A tensor of Semantic ID tuples representing the user's history.
         :param user_ids: An optional tensor of user IDs.
         :param num_items_to_generate: The number of complete item tuples to generate.
+        :param constrained: bool, whether to apply Trie constraints.
         :return: A structured tensor of generated Semantic IDs. 
                  Shape: [Batch, num_items_to_generate, self.codebook_layers + 1].
         """
@@ -408,20 +437,34 @@ class TigerSeq2Seq(nn.Module):
             device=device
         )
 
-        # initialize cache
+        # initialize kv-cache
         past_key_values = None
 
-        tokens_per_item = self.codebook_layers + 1
+        if self.codebooks is not None:
+            tokens_per_item = self.codebooks.shape[1]
+        else:
+            if constrained:
+                logger.warning("Codebooks not set! Running unconstrained generation.")
+                constrained = False
+            tokens_per_item = self.codebook_layers + 1
+            
         total_tokens = num_items_to_generate * tokens_per_item
 
         generated_tokens = []
+        
+        # TRIE STATE INITIALIZATION for greedy decoding
+        current_trie_nodes = torch.zeros(batch_size, dtype=torch.long, device=device)
 
-        for _ in range(total_tokens):
+        for step in range(total_tokens):
+            # reset Trie at the beginning of each item
+            if step > 0 and step % tokens_per_item == 0:
+                current_trie_nodes = torch.zeros(batch_size, dtype=torch.long, device=device)
+
             outputs = self.backbone.decoder(
                 input_ids=current_token,
                 encoder_hidden_states=encoder_hidden_states,
                 encoder_attention_mask=encoder_attention_mask,
-                past_key_values=past_key_values, # cache the attention of previously generated tokens
+                past_key_values=past_key_values,
                 use_cache=True
             )
 
@@ -429,11 +472,21 @@ class TigerSeq2Seq(nn.Module):
             past_key_values = outputs.past_key_values
 
             # PREDICTION
-            logits = self.output_projection(outputs.last_hidden_state) # [B, 1, Vocab]
-            next_token = torch.argmax(logits[:, -1, :], dim=-1).unsqueeze(1) # squeeze out the middle dimension
-
+            logits = self.output_projection(outputs.last_hidden_state[:, -1, :]) # [B, Vocab]
+            
+            if constrained and self.trie_masks is not None:
+                valid_token_mask = self.trie_masks[current_trie_nodes]
+                logits = torch.where(valid_token_mask, logits, float('-inf'))
+                
+            next_token = torch.argmax(logits, dim=-1).unsqueeze(1) # [B, 1]
             generated_tokens.append(next_token)
             current_token = next_token
+            
+            # update Trie state
+            if constrained and self.trie_transitions is not None:
+                chosen_tokens_flat = next_token.view(-1) # [B]
+                # indices: [row=current_trie_nodes, col=chosen_tokens_flat]
+                current_trie_nodes = self.trie_transitions[current_trie_nodes, chosen_tokens_flat].long()
 
         # FORMAT OUTPUT
         flat_sequence = torch.cat(generated_tokens, dim=1) # [B, total_tokens]
