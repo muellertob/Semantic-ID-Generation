@@ -39,6 +39,9 @@ dependencies:
   - wandb
   - torchmetrics
   
+  # Testing
+  - pytest
+  
   # Notebooks & Analysis
   - jupyter
   - ipykernel
