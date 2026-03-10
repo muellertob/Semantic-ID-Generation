@@ -3,6 +3,7 @@ Main CLI entry point for the Semantic-ID Generation project.
 Supports multiple commands:
 - train-rqvae: Train the RQ-VAE model
 - train-seq2seq: Train the Seq2Seq (Transformer) model
+- test-seq2seq: Test a trained Seq2Seq model on the test set
 - generate-ids: Generate Semantic IDs using a trained RQ-VAE
 """
 
@@ -10,6 +11,7 @@ import argparse
 import logging
 from train_rq_vae import run_training as run_rqvae
 from train_seq2seq import run_training as run_seq2seq
+from test_seq2seq import run_testing as test_seq2seq
 from generate_semids import run_generation
 
 logging.basicConfig(level=logging.INFO)
@@ -27,6 +29,14 @@ def main():
     seq2seq_parser = subparsers.add_parser('train-seq2seq', help='Train Seq2Seq (Transformer) model')
     seq2seq_parser.add_argument('--config', type=str, required=True, help='Path to configuration file')
     seq2seq_parser.add_argument('--semids', type=str, required=True, help='Path to generated Semantic IDs (.pt file)')
+    seq2seq_parser.add_argument('--resume', type=str, help='Path to checkpoint file to resume from')
+    seq2seq_parser.add_argument('--warmup_steps', type=int, help='Override warmup_steps from config')
+
+    # Seq2Seq Testing
+    test_seq2seq_parser = subparsers.add_parser('test-seq2seq', help='Test Seq2Seq (Transformer) model on test set')
+    test_seq2seq_parser.add_argument('--config', type=str, required=True, help='Path to configuration file')
+    test_seq2seq_parser.add_argument('--semids', type=str, required=True, help='Path to generated Semantic IDs (.pt file)')
+    test_seq2seq_parser.add_argument('--model_path', type=str, required=True, help='Path to trained model checkpoint')
 
     # ID Generation
     gen_parser = subparsers.add_parser('generate-ids', help='Generate Semantic IDs')
@@ -41,7 +51,9 @@ def main():
     if args.command == 'train-rqvae':
         run_rqvae(args.config)
     elif args.command == 'train-seq2seq':
-        run_seq2seq(args.config, args.semids)
+        run_seq2seq(args.config, args.semids, args.resume, args.warmup_steps)
+    elif args.command == 'test-seq2seq':
+        test_seq2seq(args.config, args.semids, args.model_path)
     elif args.command == 'generate-ids':
         run_generation(
             config_path=args.config,
