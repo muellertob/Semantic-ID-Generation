@@ -31,4 +31,4 @@ class Decoder(nn.Module):
         self.network = nn.Sequential(*layers)
 
     def forward(self, z):
-        return torch.sigmoid(self.network(z))
+        return self.network(z)

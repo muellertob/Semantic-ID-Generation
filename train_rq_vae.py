@@ -13,7 +13,7 @@ import random
 import numpy as np
 from omegaconf import OmegaConf
 from modules.temperature_scheduler import create_temperature_scheduler
-from schemas.quantization import QuantizeForwardMode
+from schemas.quantization import QuantizeForwardMode, QuantizeDistance
 from utils.wandb import wandb_init
 from data.factory import load_data
 from modules.rq_vae import RQ_VAE
@@ -39,14 +39,22 @@ def create_model(config, input_dim):
     """
     # Get quantization parameters with defaults
     quantization_method_str = getattr(config.model, 'quantization_method', 'ste')
+    distance_method_str = getattr(config.model, 'distance_method', 'cosine')
 
-    # Convert string to enum
+    # Convert strings to enums
     if quantization_method_str == "gumbel_softmax":
         quantization_method = QuantizeForwardMode.GUMBEL_SOFTMAX
     elif quantization_method_str == "ste":
         quantization_method = QuantizeForwardMode.STE
     else:
         raise ValueError(f"Unknown quantization method: {quantization_method_str}")
+
+    if distance_method_str == "cosine":
+        distance_mode = QuantizeDistance.COSINE
+    elif distance_method_str == "l2":
+        distance_mode = QuantizeDistance.L2
+    else:
+        raise ValueError(f"Unknown distance mode: {distance_method_str}")
 
     model = RQ_VAE(
         input_dim=input_dim,
@@ -58,9 +66,10 @@ def create_model(config, input_dim):
         n_quantization_layers=config.model.num_codebook_layers,
         commitment_weight=config.model.commitment_weight,
         quantization_method=quantization_method,
+        distance_mode=distance_mode,
     )
 
-    logger.info(f"Created RQ-VAE model with {quantization_method_str} quantization")
+    logger.info(f"Created RQ-VAE model with {quantization_method_str} quantization and {distance_method_str} distance")
     return model
 
 def train(model, data, optimizer, scheduler, num_epochs, device, config):

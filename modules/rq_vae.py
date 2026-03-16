@@ -29,6 +29,7 @@ class RQ_VAE(nn.Module, PyTorchModelHubMixin):
         n_quantization_layers: int = 3,
         commitment_weight: float = 0.25,
         quantization_method: QuantizeForwardMode = QuantizeForwardMode.STE,
+        distance_mode: QuantizeDistance = QuantizeDistance.COSINE,
     ) -> None:
         super().__init__()
 
@@ -41,6 +42,7 @@ class RQ_VAE(nn.Module, PyTorchModelHubMixin):
         self.commitment_weight = commitment_weight
         self.quantization_method = quantization_method
         self.n_quantization_layers = n_quantization_layers
+        self.distance_mode = distance_mode
 
         self.quantization_layers = nn.ModuleList(modules=[
             Quantization(
@@ -50,7 +52,7 @@ class RQ_VAE(nn.Module, PyTorchModelHubMixin):
                 do_kmeans_init=codebook_kmeans_init,
                 sim_vq=codebook_sim_vq,
                 forward_mode=quantization_method,
-                distance_mode=QuantizeDistance.L2,
+                distance_mode=distance_mode,
             )
             for _ in range(n_quantization_layers)
         ])
@@ -136,9 +138,12 @@ class RQ_VAE(nn.Module, PyTorchModelHubMixin):
         embs = quantized.embeddings  # Shape: (h, d, b)
         # Sum over quantization layers and transpose to (b, d)
         x_hat = self.decode(embs.sum(dim=0).T)  # (h, d, b) -> (d, b) -> (b, d)
-        x_hat = torch.nn.functional.normalize(x_hat, p=2)
+        
+        # normalize both x and x_hat to avoid scale issues in MSE loss
+        x_norm = torch.nn.functional.normalize(x, p=2, dim=1)
+        x_hat = torch.nn.functional.normalize(x_hat, p=2, dim=1)
 
-        reconstuction_loss = F.mse_loss(x_hat, x, reduction='sum')  # Using sum as the loss to match the previous behavior
+        reconstuction_loss = F.mse_loss(x_hat, x_norm, reduction='mean')
         rqvae_loss = quantized.quantize_loss
         loss = (reconstuction_loss + rqvae_loss).mean()
 
