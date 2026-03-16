@@ -6,7 +6,7 @@ import math
 from train_rq_vae import train
 from omegaconf import OmegaConf
 from data.loader import load_movie_lens, load_amazon
-from modules.rq_vae import RQ_VAE
+from modules.rqvae import RQ_VAE
 import argparse
 import itertools
 import json

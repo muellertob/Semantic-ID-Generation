@@ -2,7 +2,7 @@ import torch
 import argparse
 from omegaconf import OmegaConf
 from data.factory import load_data
-from modules.rq_vae import RQ_VAE
+from modules.rqvae import RQ_VAE
 import os
 import logging
 
@@ -20,7 +20,7 @@ def load_trained_model(model_path, config, device, input_dim):
         commitment_weight=config.model.commitment_weight,
     )
     
-    model.load_state_dict(torch.load(model_path, map_location=device))
+    model.load_state_dict(torch.load(model_path, map_location=device), strict=False)
     model.to(device)
     model.eval()
     

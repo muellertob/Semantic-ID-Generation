@@ -8,7 +8,7 @@ from tqdm import tqdm
 import wandb
 import os
 
-from modules.seq2seq import TigerSeq2Seq
+from modules.recommender import TigerSeq2Seq
 from data.loader import load_amazon_sequences
 from data.sequence import SemanticIDSequenceDataset, collate_fn
 from utils.wandb import wandb_init

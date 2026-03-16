@@ -12,11 +12,11 @@ import logging
 import random
 import numpy as np
 from omegaconf import OmegaConf
-from modules.temperature_scheduler import create_temperature_scheduler
+from modules.rqvae.scheduler import create_temperature_scheduler
 from schemas.quantization import QuantizeForwardMode, QuantizeDistance
 from utils.wandb import wandb_init
 from data.factory import load_data
-from modules.rq_vae import RQ_VAE
+from modules.rqvae import RQ_VAE
 from utils.model_id_generation import generate_model_id
 
 logger = logging.getLogger(__name__)
@@ -62,7 +62,7 @@ def create_model(config, input_dim):
         hidden_dims=config.model.hidden_dimensions,
         codebook_size=config.model.codebook_clusters,
         codebook_kmeans_init=True,
-        codebook_sim_vq=True,
+        codebook_sim_vq=False,
         n_quantization_layers=config.model.num_codebook_layers,
         commitment_weight=config.model.commitment_weight,
         quantization_method=quantization_method,

@@ -13,8 +13,8 @@ class QuantizeLoss(nn.Module):
         self.commitment_weight = commitment_weight
 
     def forward(self, query: Tensor, value: Tensor) -> Tensor:
-        emb_loss = ((query.detach() - value)**2).sum(axis=[-1])
-        query_loss = ((query - value.detach())**2).sum(axis=[-1])
+        emb_loss = ((query.detach() - value)**2).mean(dim=-1)
+        query_loss = ((query - value.detach())**2).mean(dim=-1)
         return emb_loss + self.commitment_weight * query_loss
 
 class Quantization(nn.Module):
@@ -83,7 +83,7 @@ class Quantization(nn.Module):
 
         # detach to ensure no gradients
         x_np = x.detach().cpu().numpy()
-        kmeans = KMeans(n_clusters=self.codebook_size, n_init=10, max_iter=300)
+        kmeans = KMeans(n_clusters=self.codebook_size, n_init='auto', max_iter=300)
         kmeans.fit(x_np)
         
         self.embedding.weight.copy_(torch.from_numpy(kmeans.cluster_centers_).to(self.device))
