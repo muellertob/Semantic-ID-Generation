@@ -14,7 +14,7 @@ import numpy as np
 from omegaconf import OmegaConf
 from modules.rqvae.scheduler import create_temperature_scheduler
 from schemas.quantization import QuantizeForwardMode, QuantizeDistance
-from utils.wandb import wandb_init
+from utils.wandb import wandb_init, get_run_name, log_model_artifact
 from data.factory import load_data
 from modules.rqvae import RQ_VAE
 from utils.model_id_generation import generate_model_id
@@ -128,6 +128,12 @@ def train(model, data, optimizer, scheduler, num_epochs, device, config):
         total_reconstruction_loss = 0
         total_commit_loss = 0
         p_unique = 0
+        total_layer_coverages = None
+        total_layer_entropies = None
+        total_first_residual_norm = 0
+        total_last_residual_norm = 0
+        total_first_centroids_norm = 0
+        total_last_centroids_norm = 0
 
         # Get current temperature
         current_temperature = 1.0  # Default for STE
@@ -149,18 +155,40 @@ def train(model, data, optimizer, scheduler, num_epochs, device, config):
             result.loss.backward()
             optimizer.step()
 
+
             total_loss += result.loss.item()
             total_reconstruction_loss += result.reconstruction_loss.item()
             total_commit_loss += result.rqvae_loss.item()
             p_unique += result.p_unique_ids.item()
 
+            coverages = result.layer_coverages.cpu()
+            entropies = result.layer_entropies.cpu()
+            if total_layer_coverages is None:
+                total_layer_coverages = coverages.clone()
+                total_layer_entropies = entropies.clone()
+            else:
+                total_layer_coverages += coverages
+                total_layer_entropies += entropies
+            total_first_residual_norm += result.first_residual_norm.item()
+            total_last_residual_norm += result.last_residual_norm.item()
+            total_first_centroids_norm += result.first_centroids_norm.item()
+            total_last_centroids_norm += result.last_centroids_norm.item()
+
         # Calculate epoch statistics
+        n_batches = len(train_loader)
+        avg_layer_coverages = total_layer_coverages / n_batches
+        avg_layer_entropies = total_layer_entropies / n_batches
+
         epoch_stats = {
             "Epoch": epoch,
-            "Loss": total_loss / len(train_loader),
-            "Reconstruction Loss": total_reconstruction_loss / len(train_loader),
-            "RQ-VAE Loss": total_commit_loss / len(train_loader),
-            "Prob Unique IDs": p_unique / len(train_loader)
+            "Loss": total_loss / n_batches,
+            "Reconstruction Loss": total_reconstruction_loss / n_batches,
+            "RQ-VAE Loss": total_commit_loss / n_batches,
+            "Prob Unique IDs": p_unique / n_batches,
+            "Avg Coverage": avg_layer_coverages.mean().item(),
+            "Avg Entropy": avg_layer_entropies.mean().item(),
+            "First Residual Norm": total_first_residual_norm / n_batches,
+            "Last Residual Norm": total_last_residual_norm / n_batches,
         }
 
         # Add temperature to stats if using Gumbel Softmax
@@ -168,12 +196,18 @@ def train(model, data, optimizer, scheduler, num_epochs, device, config):
             epoch_stats["Temperature"] = current_temperature
 
         # Early stopping condition
-        if p_unique / len(train_loader) >= 1:
+        if p_unique / n_batches >= 1:
             logger.info(f"Early stopping at epoch {epoch}: All IDs are unique")
             break
 
         if config.general.use_wandb:
-            wandb.log(epoch_stats, step=epoch)
+            wandb_stats = dict(epoch_stats)
+            for i in range(len(avg_layer_coverages)):
+                wandb_stats[f"layer_{i}/coverage"] = avg_layer_coverages[i].item()
+                wandb_stats[f"layer_{i}/entropy"] = avg_layer_entropies[i].item()
+            wandb_stats["First Centroids Norm"] = total_first_centroids_norm / n_batches
+            wandb_stats["Last Centroids Norm"] = total_last_centroids_norm / n_batches
+            wandb.log(wandb_stats, step=epoch)
 
         epoch_progress.set_postfix(epoch_stats)
         results.append(epoch_stats)
@@ -192,11 +226,15 @@ def run_training(config_path):
     model_id = generate_model_id(config)
 
     logger.info(f"Using device: {device}")
-    logger.info(f"Model ID: {model_id}")
 
     # Initialize wandb if enabled
     if config.general.use_wandb:
-        wandb_init(config)
+        wandb_init(config, project=config.general.wandb_project_rqvae)
+
+    # Use WandB run name as model ID (human-readable, traceable); fall back to
+    # the hyperparam-encoded ID when WandB is disabled.
+    model_id = get_run_name(fallback=generate_model_id(config))
+    logger.info(f"Model ID: {model_id}")
 
     # Load data and create model
     data = load_data(config)
@@ -226,8 +264,17 @@ def run_training(config_path):
     )
 
     # Save model
-    torch.save(model.state_dict(), f"models/{model_id}.pt")
+    model_path = f"models/{model_id}.pt"
+    torch.save(model.state_dict(), model_path)
     logger.info(f"Training completed. Final results: {train_results[-1]}")
+    logger.info(f"Model saved to: {model_path}")
 
     if config.general.use_wandb:
+        log_model_artifact(
+            model_path=model_path,
+            run_name=model_id,
+            artifact_type="rqvae-tokenizer",
+            metadata={"final_loss": train_results[-1].get("Loss"),
+                      "config": OmegaConf.to_container(config, resolve=True)},
+        )
         wandb.finish()

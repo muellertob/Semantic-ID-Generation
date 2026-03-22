@@ -134,31 +134,69 @@ class RQ_VAE(nn.Module, PyTorchModelHubMixin):
         )
         
     def forward(self, x, temperature: float = 1.0) -> RqVaeComputedLosses:
-        quantized = self.get_semantic_ids(x, temperature=temperature)
-        embs = quantized.embeddings  # Shape: (h, d, b)
-        # Sum over quantization layers and transpose to (b, d)
-        x_hat = self.decode(embs.sum(dim=0).T)  # (h, d, b) -> (d, b) -> (b, d)
-        
-        # normalize both x and x_hat to avoid scale issues in MSE loss
-        x_norm = torch.nn.functional.normalize(x, p=2, dim=1)
-        x_hat = torch.nn.functional.normalize(x_hat, p=2, dim=1)
+        res = self.encode(x)
 
-        reconstuction_loss = F.mse_loss(x_hat, x_norm, reduction='mean')
-        rqvae_loss = quantized.quantize_loss.mean()
+        quantize_loss = torch.tensor(0.0, device=x.device)
+        embs, residuals, sem_ids = [], [], []
+        first_residual = None
+
+        for i, layer in enumerate(self.quantization_layers):
+            residuals.append(res)
+            quantized = layer(res, temperature=temperature)
+            quantize_loss = quantize_loss + quantized.loss
+            emb, id = quantized.embeddings, quantized.ids
+            res = res - emb  # Update residuals
+            if i == 0:
+                first_residual = res
+            sem_ids.append(id)
+            embs.append(emb)
+
+        final_residual = res
+        embs_tensor = torch.stack(embs) # (h, b, d)
+
+        # decode
+        x_hat = self.decode(embs_tensor.sum(dim=0))
+
+        reconstuction_loss = F.mse_loss(x_hat, x)
+        rqvae_loss = quantize_loss.mean()
         loss = reconstuction_loss + rqvae_loss
 
         with torch.no_grad():
-            # Compute debug ID statistics
-            # embs shape: (h, d, b) -> compute norm along embedding dim and transpose to (b, h)
-            embs_norm = embs.norm(dim=1).T  # (h, b) -> (b, h)
-            p_unique_ids = (~torch.triu(
-                (rearrange(quantized.sem_ids, "b d -> b 1 d") == rearrange(quantized.sem_ids, "b d -> 1 b d")).all(dim=-1), diagonal=1)
-            ).all(dim=1).sum() / quantized.sem_ids.shape[0]
+            sem_ids_tensor = torch.stack(sem_ids, dim=1)
+            embs_norm = embs_tensor.norm(dim=-1).T  # (h, b) -> (b, h)
+
+            # fraction of unique full-tuple IDs in the batch
+            p_unique_ids = torch.unique(sem_ids_tensor, dim=0).shape[0] / sem_ids_tensor.shape[0]
+
+            # residual norms relative to the encoder output
+            input_norm = residuals[0].norm(dim=1).mean().clamp(min=1e-8)
+            first_residual_norm = first_residual.norm(dim=1).mean() / input_norm
+            last_residual_norm = final_residual.norm(dim=1).mean() / input_norm
+
+            # codebook vector norms (first and last layer)
+            first_centroids_norm = self.quantization_layers[0].get_codebook().norm(dim=1).mean()
+            last_centroids_norm = self.quantization_layers[-1].get_codebook().norm(dim=1).mean()
+
+            # per-layer: fraction of codebook used + Shannon entropy of assignments
+            layer_coverages, layer_entropies = [], []
+            for ids in sem_ids:
+                unique_ids, counts = torch.unique(ids, return_counts=True)
+                layer_coverages.append(unique_ids.shape[0] / self.codebook_size)
+                probs = counts.float() / counts.sum()
+                layer_entropies.append(-(probs * probs.log()).sum())
+            layer_coverages = torch.tensor(layer_coverages, device=x.device)
+            layer_entropies = torch.stack(layer_entropies)
 
         return RqVaeComputedLosses(
             loss=loss,
             reconstruction_loss=reconstuction_loss,
             rqvae_loss=rqvae_loss,
             embs_norm=embs_norm,
-            p_unique_ids=p_unique_ids
+            p_unique_ids=p_unique_ids,
+            layer_coverages=layer_coverages,
+            layer_entropies=layer_entropies,
+            first_residual_norm=first_residual_norm,
+            last_residual_norm=last_residual_norm,
+            first_centroids_norm=first_centroids_norm,
+            last_centroids_norm=last_centroids_norm,
         )
