@@ -11,7 +11,7 @@ import os
 from modules.recommender import TigerSeq2Seq
 from data.loader import load_amazon_sequences
 from data.sequence import SemanticIDSequenceDataset, collate_fn
-from utils.wandb import wandb_init
+from utils.wandb import wandb_init, get_run_name, log_model_artifact
 from utils.model_id_generation import generate_model_id
 from utils.metrics import MetricAccumulator
 
@@ -111,7 +111,12 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
     
     # initialize wandb
     if config.general.get('use_wandb', False):
-        wandb_init(config)
+        wandb_init(config, project=config.general.wandb_project_tiger)
+
+    # Use WandB run name as base model ID; fall back to config-file name when offline.
+    _fallback_id = os.path.splitext(os.path.basename(config_path))[0]
+    tiger_run_name = get_run_name(fallback=_fallback_id)
+    logger.info(f"TIGER run name: {tiger_run_name}")
         
     # load semantic IDs
     logger.info(f"Loading Semantic IDs from {semantic_ids_path}")
@@ -340,11 +345,17 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
                 best_recall_at_5 = current_recall_at_5
                 recall_no_improve = 0 # reset patience
                 if config.general.get('save_model', True):
-                    config_name = os.path.splitext(os.path.basename(config_path))[0]
-                    model_id = f"{config_name}_{config.data.dataset}_{config.data.category}_best"
+                    model_id = f"{tiger_run_name}_best"
                     save_path = f"models/{model_id}.pt"
                     save_checkpoint(model, optimizer, scheduler, epoch, current_recall_at_5, save_path, "recall@5")
                     logger.info(f"New best Recall@5 achieved ({current_recall_at_5:.4f})! Model saved to {save_path}")
+                    log_model_artifact(
+                        model_path=save_path,
+                        run_name=model_id,
+                        artifact_type="tiger-recommender",
+                        metadata={"epoch": epoch, "recall@5": current_recall_at_5,
+                                  "rqvae_semids": semantic_ids_path},
+                    )
             else:
                 recall_no_improve += 1
                 logger.info(f"No improvement in Recall@5 for {recall_no_improve} evaluations.")
