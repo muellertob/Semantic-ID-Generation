@@ -15,11 +15,13 @@ def load_amazon(category='beauty', normalize_data=True, split='train'):
     data, _, _ = torch.load(path, weights_only=False)
     
     if normalize_data:
+        # compute mean from training data only to avoid data leakage
+        train_mask = data['item']['is_train'] == True
+        train_mean = data['item']['x'][train_mask].mean(dim=0)
         # center the data
-        data['item']['x'] = data['item']['x'] - data['item']['x'].mean(dim=0)
-        
+        data['item']['x'] = data['item']['x'] - train_mean
         # L2 norm across rows to align the magnitudes
-        data['item']['x'] = F.normalize(data['item']['x'], p=2, dim=1)
+        data['item']['x'] = F.normalize(data['item']['x'], p=2, dim=1) 
         
     if split == 'all':
         data_clean = data['item']['x']
