@@ -15,7 +15,11 @@ def load_amazon(category='beauty', normalize_data=True, split='train'):
     data, _, _ = torch.load(path, weights_only=False)
     
     if normalize_data:
-        data['item']['x'] = F.normalize(data['item']['x'], p=2, dim=1) # L2 norm across rows to align the magnitudes
+        # center the data
+        data['item']['x'] = data['item']['x'] - data['item']['x'].mean(dim=0)
+        
+        # L2 norm across rows to align the magnitudes
+        data['item']['x'] = F.normalize(data['item']['x'], p=2, dim=1)
         
     if split == 'all':
         data_clean = data['item']['x']

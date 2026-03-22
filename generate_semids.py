@@ -3,6 +3,7 @@ import argparse
 from omegaconf import OmegaConf
 from data.factory import load_data
 from modules.rqvae import RQ_VAE
+from utils.sid_evaluation import evaluate_semids
 import os
 import logging
 
@@ -94,7 +95,7 @@ def resolve_collisions(semids, max_collisions):
     
     return final_ids
 
-def run_generation(config_path, model_path, output_path, temperature=0.5, batch_size=64):
+def run_generation(config_path, model_path, output_path, temperature=0.5, batch_size=64, run_eval=True):
     """
     Orchestrate semantic ID generation.
     """
@@ -122,7 +123,12 @@ def run_generation(config_path, model_path, output_path, temperature=0.5, batch_
     )
     
     logger.info(f"Generated raw semantic IDs shape: {semids.shape}")
-    
+
+    # EVALUATE SEMANTIC IDS
+    if run_eval:
+        plot_dir = os.path.join(os.path.dirname(output_path), "plots")
+        evaluate_semids(data.cpu(), semids.cpu(), config, plot_dir=plot_dir)
+
     # RESOLVE COLLISIONS (add 4th token)
     # pass codebook_clusters as the limit for the collision token
     codebook_size = config.model.codebook_clusters
@@ -158,15 +164,18 @@ def main():
                        help='Temperature for Gumbel Softmax (lower = sharper)')
     parser.add_argument('--batch_size', type=int, default=64,
                        help='Batch size for processing')
-    
+    parser.add_argument('--no_eval', action='store_true',
+                       help='Skip evaluation metrics and plots (faster for quick re-generation)')
+
     args = parser.parse_args()
-    
+
     run_generation(
         config_path=args.config,
         model_path=args.model_path,
         output_path=args.output_path,
         temperature=args.temperature,
-        batch_size=args.batch_size
+        batch_size=args.batch_size,
+        run_eval=not args.no_eval,
     )
 
 if __name__ == "__main__":
