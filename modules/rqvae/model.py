@@ -165,8 +165,10 @@ class RQ_VAE(nn.Module, PyTorchModelHubMixin):
             sem_ids_tensor = torch.stack(sem_ids, dim=1)
             embs_norm = embs_tensor.norm(dim=-1).T  # (h, b) -> (b, h)
 
-            # fraction of unique full-tuple IDs in the batch
-            p_unique_ids = torch.unique(sem_ids_tensor, dim=0).shape[0] / sem_ids_tensor.shape[0]
+            # fraction of unique full-tuple IDs in the batch (cpu: unique_dim not on MPS)
+            p_unique_ids = torch.tensor(
+                torch.unique(sem_ids_tensor.cpu(), dim=0).shape[0] / sem_ids_tensor.shape[0]
+            )
 
             # residual norms relative to the encoder output
             input_norm = residuals[0].norm(dim=1).mean().clamp(min=1e-8)
