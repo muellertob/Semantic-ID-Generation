@@ -13,6 +13,7 @@ from train_rq_vae import run_training as run_rqvae
 from train_seq2seq import run_training as run_seq2seq
 from test_seq2seq import run_testing as test_seq2seq
 from generate_semids import run_generation
+from train_rqkmeans import run_training as run_rqkmeans
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -38,6 +39,10 @@ def main():
     test_seq2seq_parser.add_argument('--semids', type=str, required=True, help='Path to generated Semantic IDs (.pt file)')
     test_seq2seq_parser.add_argument('--model_path', type=str, required=True, help='Path to trained model checkpoint')
 
+    # RQ-KMeans Training
+    rqkmeans_parser = subparsers.add_parser('train-rqkmeans', help='Train RQ-KMeans and generate semantic IDs')
+    rqkmeans_parser.add_argument('--config', type=str, required=True, help='Path to configuration file')
+
     # ID Generation
     gen_parser = subparsers.add_parser('generate-ids', help='Generate Semantic IDs')
     gen_parser.add_argument('--config', type=str, required=True, help='Path to configuration file')
@@ -46,14 +51,24 @@ def main():
     gen_parser.add_argument('--temperature', type=float, default=0.5, help='Sampling temperature')
     gen_parser.add_argument('--batch_size', type=int, default=64, help='Batch size')
 
+    # SASRec benchmark
+    sasrec_parser = subparsers.add_parser("train-sasrec", help="Train SASRec benchmark model")
+    sasrec_parser.add_argument("--config", type=str, required=True, help="Path to configuration file")
+    sasrec_parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume from")
+
     args = parser.parse_args()
 
-    if args.command == 'train-rqvae':
+    if args.command == 'train-rqkmeans':
+        run_rqkmeans(args.config)
+    elif args.command == 'train-rqvae':
         run_rqvae(args.config)
     elif args.command == 'train-seq2seq':
         run_seq2seq(args.config, args.semids, args.resume, args.warmup_steps)
     elif args.command == 'test-seq2seq':
         test_seq2seq(args.config, args.semids, args.model_path)
+    elif args.command == 'train-sasrec':
+        from train_sasrec import run_training as run_sasrec
+        run_sasrec(args.config, resume_path=args.resume)
     elif args.command == 'generate-ids':
         run_generation(
             config_path=args.config,
