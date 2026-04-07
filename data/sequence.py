@@ -114,3 +114,76 @@ def collate_fn(batch):
         "target_tuples": stacked_targets,
         "user_ids": stacked_users
     }
+
+
+class SASRecDataset(Dataset):
+    """
+    Dataset for SASRec benchmark.
+    Returns left-padded sequences of 1-based item IDs (0 = padding).
+    """
+
+    def __init__(self, history_data, num_items, max_len=50, mode='train'):
+        """
+        Args:
+            history_data: dict with splits, each containing userId, itemId, itemId_fut
+            num_items: total number of items in the dataset
+            max_len: maximum sequence length
+            mode: 'train', 'eval', or 'test'
+        """
+        self.num_items = num_items
+        self.max_len = max_len
+        self.mode = mode
+
+        self.user_ids = history_data[mode]['userId']
+        self.item_seqs = history_data[mode]['itemId']
+        self.target_items = history_data[mode]['itemId_fut']
+
+    def __len__(self):
+        return len(self.user_ids)
+
+    def __getitem__(self, idx):
+        raw_seq = self.item_seqs[idx]
+        target_raw = self.target_items[idx]
+
+        if isinstance(raw_seq, list):
+            raw_seq = torch.tensor(raw_seq, dtype=torch.long)
+        elif isinstance(raw_seq, torch.Tensor):
+            raw_seq = raw_seq.detach().clone()
+        else:
+            raw_seq = torch.tensor(raw_seq, dtype=torch.long)
+            
+        if isinstance(target_raw, torch.Tensor):
+            target_raw = target_raw.item()
+
+        # remove existing padding (-1) to handle both unpadded (train) and padded (eval/test)
+        # and ensure we can left-pad properly.
+        valid_items = raw_seq[raw_seq != -1]
+        
+        # truncate to last max_len items
+        if len(valid_items) > self.max_len:
+            valid_items = valid_items[-self.max_len:]
+
+        seq_len = len(valid_items)
+
+        # convert to 1-based IDs
+        items_1based = valid_items + 1
+
+        # left-pad to max_len with 0
+        item_seq = torch.zeros(self.max_len, dtype=torch.long)
+        if seq_len > 0:
+            item_seq[-seq_len:] = items_1based
+
+        return {
+            'item_seq': item_seq,
+            'target_item': int(target_raw + 1),  # 1-based
+            'seq_len': seq_len,
+        }
+
+
+def sasrec_collate_fn(batch):
+    """Collate function for SASRecDataset. Stacks fixed-length sequences."""
+    return {
+        'item_seq': torch.stack([b['item_seq'] for b in batch]),
+        'target_item': torch.tensor([b['target_item'] for b in batch], dtype=torch.long),
+        'seq_len': torch.tensor([b['seq_len'] for b in batch], dtype=torch.long),
+    }
