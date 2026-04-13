@@ -10,22 +10,6 @@ from typing import List
 
 class PreprocessingMixin:
     @staticmethod
-    def _process_genres(genres, one_hot=True):
-        if one_hot:
-            return genres
-
-        max_genres = genres.sum(axis=1).max()
-        idx_list = []
-        for i in range(genres.shape[0]):
-            idxs = np.where(genres[i, :] == 1)[0] + 1
-            missing = max_genres - len(idxs)
-            if missing > 0:
-                idxs = np.array(list(idxs) + missing * [0])
-            idx_list.append(idxs)
-        out = np.stack(idx_list)
-        return out
-
-    @staticmethod
     def _remove_low_occurrence(source_df, target_df, index_col):
         if isinstance(index_col, str):
             index_col = [index_col]

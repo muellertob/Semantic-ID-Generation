@@ -50,8 +50,7 @@ class RawMovieLens1M(MovieLens1M, PreprocessingMixin):
         df = self._remove_low_occurrence(ratings_df, full_df, "movieId")
         movie_mapping = {idx: i for i, idx in enumerate(df.index)}
 
-        genres = self._process_genres(df["genres"].str.get_dummies('|').values, one_hot=True)
-        genres = torch.from_numpy(genres).to(torch.float)
+        genres = torch.from_numpy(df["genres"].str.get_dummies('|').values).to(torch.float)
 
         titles_text = df["title"].apply(lambda s: s.split("(")[0].strip()).tolist()
         titles_emb = self._encode_text_feature(titles_text)
