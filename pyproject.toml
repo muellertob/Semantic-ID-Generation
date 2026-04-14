@@ -1,0 +1,9 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: tests requiring real dataset files or long computation (deselect with '-m not slow')",
+    "integration: tests that exercise multiple components together",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]

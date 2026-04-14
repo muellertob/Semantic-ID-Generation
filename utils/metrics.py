@@ -60,9 +60,10 @@ class MetricAccumulator:
         """Returns the final averaged metrics."""
         if self.total_samples == 0:
             return {
-                "recall": {k: 0.0 for k in self.k_list}, 
+                "recall": {k: 0.0 for k in self.k_list},
                 "ndcg": {k: 0.0 for k in self.k_list},
-                "hierarchical": {k: 0.0 for k in self.hierarchical_recall.keys()}
+                "hierarchical": {k: 0.0 for k in self.hierarchical_recall.keys()},
+                "total_samples": 0,
             }
             
         return {
