@@ -83,7 +83,7 @@ class Quantization(nn.Module):
 
         # detach to ensure no gradients
         x_np = x.detach().cpu().numpy()
-        kmeans = KMeans(n_clusters=self.codebook_size, n_init='auto', max_iter=300)
+        kmeans = KMeans(n_clusters=self.codebook_size, init='k-means++', n_init='auto', max_iter=300)
         kmeans.fit(x_np)
         
         self.embedding.weight.copy_(torch.from_numpy(kmeans.cluster_centers_).to(self.device))
