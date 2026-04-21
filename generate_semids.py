@@ -126,8 +126,7 @@ def run_generation(config_path, model_path, output_path, temperature=0.5, batch_
 
     # EVALUATE SEMANTIC IDS
     if run_eval:
-        plot_dir = os.path.join(os.path.dirname(output_path), "plots")
-        evaluate_semids(data.cpu(), semids.cpu(), config, plot_dir=plot_dir)
+        evaluate_semids(semids.cpu(), config)
 
     # RESOLVE COLLISIONS (add 4th token)
     # pass codebook_clusters as the limit for the collision token
