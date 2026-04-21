@@ -146,7 +146,7 @@ def train(model, data, optimizer, scheduler, num_epochs, device, config):
         # Initialize codebooks on first epoch
         if epoch == 0:
             kmeans_init_data = torch.Tensor(data[torch.arange(min(20000, len(data)))]).to(device, dtype=torch.float32)
-            model(kmeans_init_data, temperature=current_temperature)
+            model.kmeans_init_codebooks(kmeans_init_data, temperature=current_temperature)
 
         for batch in train_loader:
             batch = batch.to(device).float()
