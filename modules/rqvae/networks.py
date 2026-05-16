@@ -9,7 +9,7 @@ class Encoder(nn.Module):
         dims = [input_dim] + hidden_dims
         for i in range(len(dims) - 1):
             layers.append(nn.Linear(dims[i], dims[i + 1]))
-            layers.append(nn.SiLU())
+            layers.append(nn.ReLU())
         layers.append(nn.Linear(dims[-1], latent_dim))
         
         self.network = nn.Sequential(*layers)
@@ -25,7 +25,7 @@ class Decoder(nn.Module):
         
         for i in range(len(dims) - 1):
             layers.append(nn.Linear(dims[i], dims[i + 1]))
-            layers.append(nn.SiLU())
+            layers.append(nn.ReLU())
         layers.append(nn.Linear(dims[-1], output_dim))
         
         self.network = nn.Sequential(*layers)
