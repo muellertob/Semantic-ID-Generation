@@ -121,7 +121,7 @@ def train(model, data, optimizer, scheduler, num_epochs, device, config):
     epoch_progress = tqdm(range(num_epochs), total=num_epochs, desc="Training Loop")
     results = []
 
-    train_loader = DataLoader(data, batch_size=config.data.batch_size)
+    train_loader = DataLoader(data, batch_size=config.data.batch_size, shuffle=True)
 
     for epoch in epoch_progress:
         total_loss = 0
@@ -155,6 +155,8 @@ def train(model, data, optimizer, scheduler, num_epochs, device, config):
             result.loss.backward()
             optimizer.step()
 
+            if scheduler is not None:
+                scheduler.step()
 
             total_loss += result.loss.item()
             total_reconstruction_loss += result.reconstruction_loss.item()
@@ -189,6 +191,7 @@ def train(model, data, optimizer, scheduler, num_epochs, device, config):
             "Avg Entropy": avg_layer_entropies.mean().item(),
             "First Residual Norm": total_first_residual_norm / n_batches,
             "Last Residual Norm": total_last_residual_norm / n_batches,
+            "Learning Rate": optimizer.param_groups[0]['lr'],
         }
 
         # Add temperature to stats if using Gumbel Softmax
@@ -237,15 +240,27 @@ def run_training(config_path):
     logger.info(f"Model ID: {model_id}")
 
     # Load data and create model
-    data = load_data(config)
+    # Use config.data.split if available, default to 'all'
+    data_split = getattr(config.data, 'split', 'all')
+    logger.info(f"Loading data with split: {data_split}")
+    data = load_data(config, split=data_split)
     model = create_model(config, data.shape[1])
     model.to(device)
 
     # Setup optimizer and scheduler
-    optimizer = optim.AdamW(model.parameters(),
-                           lr=config.train.learning_rate,
-                           weight_decay=config.train.weight_decay)
-    scheduler = lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
+    optimizer_type = getattr(config.train, 'optimizer', 'adamw').lower()
+    if optimizer_type == 'adamw':
+        optimizer = optim.AdamW(model.parameters(),
+                               lr=config.train.learning_rate,
+                               weight_decay=config.train.weight_decay)
+    elif optimizer_type == 'adagrad':
+        optimizer = optim.Adagrad(model.parameters(),
+                                 lr=config.train.learning_rate,
+                                 weight_decay=config.train.weight_decay)
+    else:
+        raise ValueError(f"Unknown optimizer: {optimizer_type}")
+    
+    scheduler = None
 
     # Watch model with wandb if enabled
     if config.general.use_wandb:
