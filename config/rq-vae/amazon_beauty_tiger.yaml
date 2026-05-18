@@ -25,14 +25,6 @@ train:
   weight_decay: 0
   num_epochs: 2000
   use_lr_scheduler: False
-  warmup_steps: 1000
-  min_lr_ratio: 0.01
-  temperature_annealing: True
-  temperature_update_frequency: 1
-  annealing_schedule: "cosine"
-  temperature: 1.0
-  min_temperature: 0.5
-  temperature_decay: 0.995
 
 # additional configuration
 general:
