@@ -44,14 +44,14 @@ All pipeline stages are controlled via `main.py`.
 python main.py train-rqvae --config config/rq-vae/amazon_beauty_tiger.yaml
 ```
 
-Trains the RQ-VAE to reconstruct item embeddings and learn discrete codebooks. The trained model is saved to `models/<model_id>.pt`.
+Trains the RQ-VAE to reconstruct item embeddings and learn discrete codebooks. The trained model is saved to `models/rq-vae/<model_id>.pt`.
 
 ### 2. Generate Semantic IDs
 
 ```bash
 python main.py generate-ids \
   --config config/rq-vae/amazon_beauty_tiger.yaml \
-  --model_path models/<model_id>.pt \
+  --model_path models/rq-vae/<model_id>.pt \
   --output_path outputs/semids.pt
 ```
 
@@ -66,7 +66,7 @@ python main.py train-seq2seq \
 ```
 
 Optional flags:
-- `--resume models/<checkpoint>.pt` — resume training from a checkpoint
+- `--resume models/recommender/<checkpoint>.pt` — resume training from a checkpoint
 - `--warmup_steps N` — override warmup steps from config
 
 ### 4. Test TIGER
@@ -75,7 +75,7 @@ Optional flags:
 python main.py test-seq2seq \
   --config config/recommender/amazon_beauty_tiger.yaml \
   --semids outputs/semids.pt \
-  --model_path models/<tiger_id>.pt
+  --model_path models/recommender/<tiger_id>.pt
 ```
 
 ## Configuration
@@ -91,6 +91,10 @@ Configurations are split into model-specific directories:
 ### Recommender Configuration (`config/recommender/`)
 - **`seq2seq.max_history_len`**: Number of past interactions to consider.
 - **`seq2seq.learning_rate`**: Standard is `5e-4`.
+
+### SASRec Configuration (`config/sasrec/`)
+- **`sasrec.hidden_dim`**: Embedding size.
+- **`sasrec.num_blocks`**: Number of transformer layers.
 
 ## Quantization Methods
 
@@ -134,8 +138,12 @@ A differentiable alternative that provides better gradient flow:
 ├── data/                      # Data loading and preprocessing
 ├── config/
 │   ├── rq-vae/                # RQ-VAE specific configurations
-│   └── recommender/           # Recommender configurations
-├── models/                    # Saved model checkpoints
+│   ├── recommender/           # TIGER seq2seq configurations
+│   └── sasrec/                # SASRec configurations
+├── models/
+│   ├── rq-vae/                # Saved RQ-VAE models
+│   ├── recommender/           # Saved TIGER models
+│   └── sasrec/                # Saved SASRec models
 └── outputs/                   # Generated Semantic IDs
 ```
 

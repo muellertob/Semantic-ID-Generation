@@ -13,17 +13,10 @@ def wandb_init(config, project: str):
         config  : OmegaConf config object.
         project : WandB project name (caller decides which stage project to use).
     """
-    wb_conf = config.model.copy()
-    wb_conf.update(config.data)
-    wb_conf.update(config.train)
-    wb_conf.update({
-        "model_id": generate_model_id(config),
-    })
-
     wandb.init(
         project=project,
         entity=config.general.wandb_entity,
-        config=OmegaConf.to_container(wb_conf, resolve=True),
+        config=OmegaConf.to_container(config, resolve=True),
         resume="never",
         dir=os.path.join("outputs", "wandb", "runs"),
     )

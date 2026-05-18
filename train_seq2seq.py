@@ -113,10 +113,10 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
     if config.general.get('use_wandb', False):
         wandb_init(config, project=config.general.wandb_project_recommender)
 
-    # Use WandB run name as base model ID; fall back to config-file name when offline.
-    _fallback_id = os.path.splitext(os.path.basename(config_path))[0]
-    tiger_run_name = get_run_name(fallback=_fallback_id)
-    logger.info(f"TIGER run name: {tiger_run_name}")
+    # Use WandB run name as base model ID; fall back to a generated model ID.
+    _fallback_id = generate_model_id(config)
+    recommender_run_name = get_run_name(fallback=_fallback_id)
+    logger.info(f"Recommender run name: {recommender_run_name}")
         
     # load semantic IDs
     logger.info(f"Loading Semantic IDs from {semantic_ids_path}")
@@ -186,8 +186,8 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
     
     # initialize model, defaulting to TIGER paper specs
     model = TigerSeq2Seq(
-        codebook_layers=config.model.get('num_codebook_layers', 3),
-        codebook_size=config.model.get('codebook_clusters', 256),
+        codebook_layers=config.seq2seq.get('num_codebook_layers', 3),
+        codebook_size=config.seq2seq.get('codebook_clusters', 256),
         user_tokens=config.seq2seq.get('user_tokens', 2000),
         d_model=config.seq2seq.get('d_model', 128),
         d_kv=config.seq2seq.get('d_kv', 64),
@@ -345,8 +345,9 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
                 best_recall_at_5 = current_recall_at_5
                 recall_no_improve = 0 # reset patience
                 if config.general.get('save_model', True):
-                    model_id = f"{tiger_run_name}_best"
-                    save_path = f"models/{model_id}.pt"
+                    os.makedirs("models/recommender", exist_ok=True)
+                    model_id = f"{recommender_run_name}_best"
+                    save_path = f"models/recommender/{model_id}.pt"
                     save_checkpoint(model, optimizer, scheduler, epoch, current_recall_at_5, save_path, "recall@5")
                     logger.info(f"New best Recall@5 achieved ({current_recall_at_5:.4f})! Model saved to {save_path}")
                     log_model_artifact(

@@ -199,9 +199,9 @@ def train(model, data, optimizer, scheduler, num_epochs, device, config):
             epoch_stats["Temperature"] = current_temperature
 
         # Early stopping condition
-        if p_unique / n_batches >= 1:
-            logger.info(f"Early stopping at epoch {epoch}: All IDs are unique")
-            break
+        #if p_unique / n_batches >= 1:
+        #    logger.info(f"Early stopping at epoch {epoch}: All IDs are unique")
+        #    break
 
         if config.general.use_wandb:
             wandb_stats = dict(epoch_stats)
@@ -279,7 +279,8 @@ def run_training(config_path):
     )
 
     # Save model
-    model_path = f"models/{model_id}.pt"
+    os.makedirs("models/rq-vae", exist_ok=True)
+    model_path = f"models/rq-vae/{model_id}.pt"
     torch.save(model.state_dict(), model_path)
     logger.info(f"Training completed. Final results: {train_results[-1]}")
     logger.info(f"Model saved to: {model_path}")
