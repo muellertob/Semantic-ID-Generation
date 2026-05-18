@@ -2,7 +2,7 @@
 data:
   dataset: "amazon"
   batch_size: 256
-  normalize_data: False
+  normalize_data: True
   category: "beauty"
 
 # model configuration (RQ-VAE)
@@ -14,11 +14,12 @@ model:
   codebook_clusters: 128
   commitment_weight: 0.15
   quantization_method: "gumbel_softmax"
-  distance_method: "l2"
+  distance_method: "cosine"
 
 # training configuration (RQ-VAE)
 train:
   seed: 10
+  optimizer: "adamw"
   learning_rate: 1e-3
   weight_decay: 1e-4
   num_epochs: 256

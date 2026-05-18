@@ -1,0 +1,19 @@
+data:
+  dataset: amazon
+  category: beauty
+
+sasrec:
+  hidden_dim: 50
+  num_blocks: 2
+  num_heads: 1
+  max_seq_len: 20
+  dropout: 0.5
+  batch_size: 128
+  learning_rate: 0.001
+  num_epochs: 2000
+  num_workers: 0
+
+general:
+  use_wandb: true
+  wandb_project_sasrec: "sasrec-benchmark"
+  save_model: true

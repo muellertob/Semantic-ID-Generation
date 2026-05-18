@@ -111,7 +111,7 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
     
     # initialize wandb
     if config.general.get('use_wandb', False):
-        wandb_init(config, project=config.general.wandb_project_tiger)
+        wandb_init(config, project=config.general.wandb_project_recommender)
 
     # Use WandB run name as base model ID; fall back to config-file name when offline.
     _fallback_id = os.path.splitext(os.path.basename(config_path))[0]

@@ -20,7 +20,7 @@ The system follows a three-stage pipeline:
 
 - **Unified CLI** (`main.py`) for all pipeline stages
 - **Multiple Quantization Methods**: STE and Gumbel Softmax
-- **Distance Metrics**: L2 and Cosine Similarity (cosine preferred for text embeddings)
+- **Distance Metrics**: L2 and Cosine Similarity
 - **Temperature Annealing**: Automatic scheduling for Gumbel Softmax training
 - **TIGER Generative Retrieval**: T5-based seq2seq model with unified vocabulary for User IDs and SIDs
 - **Flexible Configuration**: OmegaConf YAML-based configuration
@@ -41,7 +41,7 @@ All pipeline stages are controlled via `main.py`.
 ### 1. Train RQ-VAE
 
 ```bash
-python main.py train-rqvae --config config/config_amazon_tiger.yaml
+python main.py train-rqvae --config config/rq-vae/amazon_beauty_tiger.yaml
 ```
 
 Trains the RQ-VAE to reconstruct item embeddings and learn discrete codebooks. The trained model is saved to `models/<model_id>.pt`.
@@ -50,7 +50,7 @@ Trains the RQ-VAE to reconstruct item embeddings and learn discrete codebooks. T
 
 ```bash
 python main.py generate-ids \
-  --config config/config_amazon_tiger.yaml \
+  --config config/rq-vae/amazon_beauty_tiger.yaml \
   --model_path models/<model_id>.pt \
   --output_path outputs/semids.pt
 ```
@@ -61,7 +61,7 @@ Encodes all items into SID tuples and writes them to `outputs/semids.pt`.
 
 ```bash
 python main.py train-seq2seq \
-  --config config/config_amazon_tiger.yaml \
+  --config config/recommender/amazon_beauty_tiger.yaml \
   --semids outputs/semids.pt
 ```
 
@@ -73,27 +73,24 @@ Optional flags:
 
 ```bash
 python main.py test-seq2seq \
-  --config config/config_amazon_tiger.yaml \
+  --config config/recommender/amazon_beauty_tiger.yaml \
   --semids outputs/semids.pt \
   --model_path models/<tiger_id>.pt
 ```
 
 ## Configuration
 
-Key parameters in the YAML config files:
+Configurations are split into model-specific directories:
 
-```yaml
-model:
-  quantization_method: "ste"   # "ste" or "gumbel_softmax"
-  distance_method: "cosine"    # "cosine" or "l2"
-  temperature: 2.0             # Initial temperature (Gumbel Softmax only)
-  min_temperature: 0.05
-  temperature_decay: 0.9995
+### RQ-VAE Configuration (`config/rq-vae/`)
+- **`data.split`**: Set to `"all"` to train on the full item set, or `"train"` for inductive testing.
+- **`model.quantization_method`**: `"ste"` or `"gumbel_softmax"`.
+- **`model.distance_method`**: `"cosine"` or `"l2"`.
+- **Note**: Temperature and scheduler parameters (like `temperature_decay` or `warmup_steps`) are specific to certain training modes and are documented within the training scripts.
 
-train:
-  temperature_annealing: true
-  temperature_update_frequency: 1
-```
+### Recommender Configuration (`config/recommender/`)
+- **`seq2seq.max_history_len`**: Number of past interactions to consider.
+- **`seq2seq.learning_rate`**: Standard is `5e-4`.
 
 ## Quantization Methods
 
@@ -135,7 +132,9 @@ A differentiable alternative that provides better gradient flow:
 │   ├── rqvae/                 # RQ-VAE model, encoder/decoder, quantization
 │   └── recommender/           # TIGER seq2seq model
 ├── data/                      # Data loading and preprocessing
-├── config/                    # YAML configuration files
+├── config/
+│   ├── rq-vae/                # RQ-VAE specific configurations
+│   └── recommender/           # Recommender configurations
 ├── models/                    # Saved model checkpoints
 └── outputs/                   # Generated Semantic IDs
 ```
