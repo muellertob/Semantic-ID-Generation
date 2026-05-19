@@ -11,6 +11,14 @@ from torch import Tensor
 from schemas.rq_vae import RqVaeOutput, RqVaeComputedLosses
 import torch.nn.functional as F
 
+class NormalizeLayer(nn.Module):
+    def __init__(self, dim=-1, p=2):
+        super().__init__()
+        self.dim = dim
+        self.p = p
+    def forward(self, x):
+        return F.normalize(x, dim=self.dim, p=self.p)
+
 class RQ_VAE(nn.Module, PyTorchModelHubMixin):
     """
     Residual Quantized Variational Autoencoder (RQ-VAE) for semantic ID generation.
@@ -57,6 +65,11 @@ class RQ_VAE(nn.Module, PyTorchModelHubMixin):
             for _ in range(n_quantization_layers)
         ])
         
+        self.normalization_layer = nn.Sequential(
+            nn.BatchNorm1d(input_dim),
+            NormalizeLayer(dim=-1, p=2)
+        )
+        
         self.encoder = Encoder(
             input_dim=input_dim,
             hidden_dims=hidden_dims,
@@ -93,14 +106,16 @@ class RQ_VAE(nn.Module, PyTorchModelHubMixin):
         Initializes all quantization layers using k-means with full (or large) dataset.
         Call this before training.
         """
-        x = self.encode(data.to(self.device).float())
+        normalized_data = self.normalization_layer(data.to(self.device).float())
+        x = self.encode(normalized_data)
         for layer in self.quantization_layers:
             layer._kmeans_init(x)
             emb = layer.get_item_embeddings(layer(x, temperature=temperature).ids)
             x = x - emb
         
     def get_semantic_id_single(self, x: Tensor, temperature: float = 1.0) -> Tensor:
-        res = self.encode(x.unsqueeze(0))  # Add batch dim (1, ...)
+        normalized_x = self.normalization_layer(x.unsqueeze(0))
+        res = self.encode(normalized_x)  # Add batch dim (1, ...)
 
         sem_ids = []
         for layer in self.quantization_layers:
@@ -112,7 +127,8 @@ class RQ_VAE(nn.Module, PyTorchModelHubMixin):
         return torch.stack(sem_ids, dim=0)  # shape: (num_layers, semantic_id_dim)
 
     def get_semantic_ids(self, x: Tensor, temperature: float = 1.0) -> RqVaeOutput:
-        res = self.encode(x)
+        normalized_x = self.normalization_layer(x)
+        res = self.encode(normalized_x)
 
         quantize_loss = torch.tensor(0.0, device=x.device)
         embs, residuals, sem_ids = [], [], []
@@ -134,7 +150,8 @@ class RQ_VAE(nn.Module, PyTorchModelHubMixin):
         )
         
     def forward(self, x, temperature: float = 1.0) -> RqVaeComputedLosses:
-        res = self.encode(x)
+        normalized_x = self.normalization_layer(x)
+        res = self.encode(normalized_x)
 
         quantize_loss = torch.tensor(0.0, device=x.device)
         embs, residuals, sem_ids = [], [], []
@@ -157,8 +174,8 @@ class RQ_VAE(nn.Module, PyTorchModelHubMixin):
         # decode
         x_hat = self.decode(embs_tensor.sum(dim=0))
 
-        reconstuction_loss = F.mse_loss(x_hat, x)
-        rqvae_loss = quantize_loss.mean()
+        reconstuction_loss = F.mse_loss(x_hat, normalized_x)
+        rqvae_loss = quantize_loss
         loss = reconstuction_loss + rqvae_loss
 
         with torch.no_grad():
