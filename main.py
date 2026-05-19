@@ -56,6 +56,11 @@ def main():
     sasrec_parser.add_argument("--config", type=str, required=True, help="Path to configuration file")
     sasrec_parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume from")
 
+    # SASRec testing
+    test_sasrec_parser = subparsers.add_parser("test-sasrec", help="Test SASRec model on test set")
+    test_sasrec_parser.add_argument("--config", type=str, required=True, help="Path to configuration file")
+    test_sasrec_parser.add_argument("--model_path", type=str, required=True, help="Path to trained model checkpoint")
+
     args = parser.parse_args()
 
     if args.command == 'train-rqkmeans':
@@ -69,6 +74,9 @@ def main():
     elif args.command == 'train-sasrec':
         from train_sasrec import run_training as run_sasrec
         run_sasrec(args.config, resume_path=args.resume)
+    elif args.command == 'test-sasrec':
+        from test_sasrec import run_testing as test_sasrec
+        test_sasrec(args.config, args.model_path)
     elif args.command == 'generate-ids':
         run_generation(
             config_path=args.config,
