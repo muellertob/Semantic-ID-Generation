@@ -12,10 +12,14 @@ class QuantizeLoss(nn.Module):
         super().__init__()
         self.commitment_weight = commitment_weight
 
-    def forward(self, query: Tensor, value: Tensor) -> Tensor:
-        emb_loss = ((query.detach() - value)**2).mean(dim=-1)
-        query_loss = ((query - value.detach())**2).mean(dim=-1)
-        return emb_loss + self.commitment_weight * query_loss
+    def forward(self, z: Tensor, z_hat: Tensor) -> Tensor:
+        # Match TIGER's Quantization Loss:
+        # Loss = ||sg[z] - z_hat||^2 + beta * ||z - sg[z_hat]||^2
+        z_no_grad = z.detach()
+        z_hat_no_grad = z_hat.detach()
+        
+        loss = F.mse_loss(z_no_grad, z_hat) + self.commitment_weight * F.mse_loss(z, z_hat_no_grad)
+        return loss
 
 class Quantization(nn.Module):
     """
@@ -70,21 +74,19 @@ class Quantization(nn.Module):
     def device(self) -> torch.device:
         return next(self.parameters()).device
 
-
-
     def set_quantization_method(self, method: QuantizeForwardMode) -> None:
         """Change the quantization method."""
         self.forward_mode = method
     
     @torch.no_grad
-    def _kmeans_init(self, x: Tensor):
+    def _kmeans_init(self, z: Tensor):
         # flatten batch dimension
-        x = x.view(-1, self.embed_dim)
+        z = z.view(-1, self.embed_dim)
 
         # detach to ensure no gradients
-        x_np = x.detach().cpu().numpy()
+        z_np = z.detach().cpu().numpy()
         kmeans = KMeans(n_clusters=self.codebook_size, init='k-means++', n_init='auto', max_iter=300)
-        kmeans.fit(x_np)
+        kmeans.fit(z_np)
         
         self.embedding.weight.copy_(torch.from_numpy(kmeans.cluster_centers_).to(self.device))
         self.kmeans_initted = True
@@ -95,44 +97,39 @@ class Quantization(nn.Module):
     def get_codebook(self) -> Tensor:
         return self.out_proj(self.embedding.weight)
 
-    def _compute_distances(self, x: Tensor) -> Tensor:
+    def _compute_distances(self, z: Tensor) -> Tensor:
         """Compute distances between input vectors and codebook entries."""
         codebook = self.get_codebook()
 
         if self.distance_mode == QuantizeDistance.L2:
-            # Compute squared L2 distances: ||x - c||^2 = ||x||^2 + ||c||^2 - 2<x,c>
-            dist = (
-                (x**2).sum(dim=1, keepdim=True) +
-                (codebook**2).sum(dim=1, keepdim=True).T -
-                2 * x @ codebook.T
-            )
+            # Compute squared L2 distances: ||x - c||^2
+            error = z.unsqueeze(1) - codebook.unsqueeze(0)
+            dist = torch.sum(error**2, dim=-1)
         elif self.distance_mode == QuantizeDistance.COSINE:
             # Compute negative cosine similarity (so min distance = max similarity)
-            x_norm = x / x.norm(dim=1, keepdim=True)
+            z_norm = z / z.norm(dim=1, keepdim=True)
             codebook_norm = codebook / codebook.norm(dim=1, keepdim=True)
-            dist = -(x_norm @ codebook_norm.T)
+            dist = -(z_norm @ codebook_norm.T)
         else:
             raise ValueError(f"Unsupported distance mode: {self.distance_mode}")
 
         return dist
 
-
-
-    def forward(self, x: Tensor, temperature: float = 1.0) -> QuantizeOutput:
+    def forward(self, z: Tensor, temperature: float = 1.0) -> QuantizeOutput:
         """
         Forward pass with unified quantization logic.
 
         Args:
-            x: Input tensor to quantize
+            z: Input tensor to quantize
             temperature: Temperature for Gumbel Softmax (ignored for STE)
         """
-        assert x.shape[-1] == self.embed_dim
+        assert z.shape[-1] == self.embed_dim
 
         if self.do_kmeans_init and not self.kmeans_initted:
-            self._kmeans_init(x)
+            self._kmeans_init(z)
 
         # Compute distances to codebook entries
-        dist = self._compute_distances(x)
+        dist = self._compute_distances(z)
 
         # Get discrete assignments (used by both methods)
         _, ids = dist.detach().min(dim=1)
@@ -147,29 +144,30 @@ class Quantization(nn.Module):
 
                 # Apply Gumbel Softmax
                 soft_assignment = F.gumbel_softmax(logits, tau=temperature, hard=False)
-                emb = soft_assignment @ codebook
-                emb_out = emb
+                soft_emb = soft_assignment @ codebook
+                emb_out = soft_emb
 
                 # For loss, use the closest codebook entry (like STE) to encourage commitment
                 closest_emb = self.get_item_embeddings(ids)
-                loss = self.quantize_loss(query=x, value=closest_emb)
+                loss = self.quantize_loss(z=z, z_hat=closest_emb)
 
             elif self.forward_mode == QuantizeForwardMode.STE:
                 # Straight-Through Estimation
-                emb = self.get_item_embeddings(ids)
-                emb_out = x + (emb - x).detach()
+                closest_emb = self.get_item_embeddings(ids)
+                emb_out = z + (closest_emb - z).detach()
 
                 # Use the quantized embedding for loss
-                loss = self.quantize_loss(query=x, value=emb)
+                loss = self.quantize_loss(z=z, z_hat=closest_emb)
 
             else:
                 raise ValueError(f"Unsupported forward mode: {self.forward_mode}")
         else:
             # Evaluation mode: use hard assignment for both methods
-            emb_out = self.get_item_embeddings(ids)
+            closest_emb = self.get_item_embeddings(ids)
+            emb_out = closest_emb
 
             # Compute loss for compatibility
-            loss = self.quantize_loss(query=x, value=emb_out)
+            loss = self.quantize_loss(z=z, z_hat=closest_emb)
 
         return QuantizeOutput(
             embeddings=emb_out,
