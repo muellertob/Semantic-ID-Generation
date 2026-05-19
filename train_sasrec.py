@@ -231,8 +231,8 @@ def run_training(config_path, resume_path=None):
                 patience_counter = 0
 
                 if getattr(config.general, 'save_model', True):
-                    os.makedirs('models', exist_ok=True)
-                    save_path = f'models/{model_id}_best.pt'
+                    os.makedirs('models/sasrec', exist_ok=True)
+                    save_path = f'models/sasrec/{model_id}_best.pt'
                     torch.save({
                         'model_state_dict': model.state_dict(),
                         'optimizer_state_dict': optimizer.state_dict(),
