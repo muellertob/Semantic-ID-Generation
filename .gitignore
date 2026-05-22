@@ -1,6 +1,7 @@
 .venv
 .env
 .DS_Store
+.antigravitycli
 
 */__pycache__
 *.py[cod]
