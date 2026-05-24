@@ -24,6 +24,7 @@ seq2seq:
   user_tokens: 2000
   num_codebook_layers: 3
   codebook_clusters: 128
+  data_augmentation: True
   
   # training loop
   num_epochs: 2000

@@ -7,10 +7,11 @@ from omegaconf import OmegaConf
 from tqdm import tqdm
 import wandb
 import os
+from functools import partial
 
 from modules.recommender import TigerSeq2Seq
 from data.loader import load_amazon_sequences
-from data.sequence import SemanticIDSequenceDataset, collate_fn
+from data.sequence import SemanticIDSequenceDataset, collate_fn, collate_fn_with_augmentation
 from utils.wandb import wandb_init, get_run_name, log_model_artifact
 from utils.model_id_generation import generate_model_id
 from utils.metrics import MetricAccumulator
@@ -137,35 +138,44 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
     train_dataset = SemanticIDSequenceDataset(
         history_data=sequences,
         semantic_ids=semantic_ids,
-        max_len=config.seq2seq.get('max_history_len', 20),
         mode='train'
     )
     
     eval_dataset = SemanticIDSequenceDataset(
         history_data=sequences,
         semantic_ids=semantic_ids,
-        max_len=config.seq2seq.get('max_history_len', 20),
         mode='eval'
     )
     
     num_workers = config.seq2seq.get('num_workers', 0)
     persistent_workers = (num_workers > 0)
     
+    use_augmentation = config.seq2seq.get('data_augmentation', False)
+    max_history_len = config.seq2seq.get('max_history_len', 20)
+    
+    if use_augmentation:
+        train_collate_fn = partial(collate_fn_with_augmentation, max_len=max_history_len)
+        logger.info("Using augmented collate function with max_len truncation")
+    else:
+        train_collate_fn = partial(collate_fn, max_len=max_history_len)
+    
     train_loader = DataLoader(
         train_dataset,
         batch_size=config.seq2seq.get('batch_size', 256),
         shuffle=True,
-        collate_fn=collate_fn,
+        collate_fn=train_collate_fn,
         num_workers=num_workers,
         persistent_workers=persistent_workers
     )
     
     # dataloader for loss evaluation
+    eval_collate_fn = partial(collate_fn, max_len=max_history_len)
+    
     eval_loader_loss = DataLoader(
         eval_dataset,
         batch_size=config.seq2seq.get('batch_size', 256),
         shuffle=False,
-        collate_fn=collate_fn,
+        collate_fn=eval_collate_fn,
         num_workers=num_workers,
         persistent_workers=persistent_workers
     )
@@ -179,7 +189,7 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
         eval_dataset,
         batch_size=metric_batch_size,
         shuffle=False,
-        collate_fn=collate_fn,
+        collate_fn=eval_collate_fn,
         num_workers=num_workers,
         persistent_workers=persistent_workers
     )

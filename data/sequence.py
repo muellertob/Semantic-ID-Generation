@@ -9,16 +9,14 @@ class SemanticIDSequenceDataset(Dataset):
     Dataset for TIGER Seq2Seq training.
     Maps raw item IDs in user history to Semantic ID tuples.
     """
-    def __init__(self, history_data, semantic_ids, max_len=20, mode='train'):
+    def __init__(self, history_data, semantic_ids, mode='train'):
         """
         Args:
             history_data (dict): Dictionary containing sequence data (from AmazonReviews)
             semantic_ids (torch.Tensor): Tensor of shape [num_items, codebook_layers]
-            max_len (int): Maximum sequence length
             mode (str): 'train', 'eval', or 'test'
         """
         self.semantic_ids = semantic_ids
-        self.max_len = max_len
         self.mode = mode
         
         # load data from the specific split
@@ -54,10 +52,6 @@ class SemanticIDSequenceDataset(Dataset):
             target_item = target_item.item()
         
         # PROCESS SEQUENCE
-        # last max_len items if the sequence is longer than max_len
-        if len(raw_seq) > self.max_len:
-            raw_seq = raw_seq[-self.max_len:]
-        
         # create a mask to ignore padding (-1) or invalid IDs
         valid_mask = (raw_seq >= 0) & (raw_seq < self.num_items)
         
@@ -84,7 +78,7 @@ class SemanticIDSequenceDataset(Dataset):
             "user_id": user_id
         }
 
-def collate_fn(batch):
+def collate_fn(batch, max_len=None):
     """
     Custom collate function to pad sequences in the batch.
     Returns:
@@ -97,6 +91,10 @@ def collate_fn(batch):
     target_tuples = [item['target_tuples'] for item in batch]
     user_ids = [item['user_id'] for item in batch]
     
+    # trim to max_len if specified
+    if max_len is not None:
+        history_tuples = [h[-max_len:] if h.size(0) > max_len else h for h in history_tuples]
+        
     # pad history sequences
     # expects input [T, codebook_layers], pads with -1
     padded_history = torch.nn.utils.rnn.pad_sequence(
@@ -104,10 +102,107 @@ def collate_fn(batch):
         batch_first=True, 
         padding_value=-1
     )
-    
+        
     # stack target tuples and user IDs
     stacked_targets = torch.stack(target_tuples, dim=0)
     stacked_users = torch.tensor(user_ids, dtype=torch.long)
+    
+    return {
+        "history_tuples": padded_history,
+        "target_tuples": stacked_targets,
+        "user_ids": stacked_users
+    }
+
+
+def collate_fn_with_augmentation(batch, max_len=None):
+    """
+    Custom collate function that performs data augmentation by sampling
+    contiguous sub-sequences from user histories.
+    """
+    max_batch_size = len(batch)
+    full_seqs = []
+    user_ids = []
+    full_lengths = []
+    for item in batch:
+        hist = item["history_tuples"]
+        targ = item["target_tuples"]
+        user_id = item["user_id"]
+        
+        # concatenate history and target
+        full_seq = torch.cat([hist, targ], dim=0) # shape [T + 1, codebook_layers]
+        full_seqs.append(full_seq)
+        user_ids.append(user_id)
+        full_lengths.append(full_seq.shape[0])
+
+    # calculate sub-sequence counts for each sequence
+    counts = [N * (N - 1) // 2 for N in full_lengths]
+    total_subseqs = sum(counts)
+    
+    if total_subseqs == 0:
+        # fallback: if no augmentation is possible, use normal collate
+        return collate_fn(batch, max_len=max_len)
+
+    # sample indices for sub-sequences to include in the batch
+    if total_subseqs > max_batch_size:
+        select_seqs = torch.randint(low=0, high=total_subseqs, size=(max_batch_size,))
+    else:
+        select_seqs = torch.arange(total_subseqs)
+
+    # MAP INDICES TO SLICES
+    # generate cumulative array of boundaries
+    cum_counts = [0]
+    for c in counts:
+        cum_counts.append(cum_counts[-1] + c)
+    cum_counts_t = torch.tensor(cum_counts)
+
+    # find which sequence each selected index belongs to
+    # searchsorted returns the index of the first element in cum_counts_t that is greater than select_seqs
+    # we subtract 1 to get the correct sequence index
+    row_indices = torch.searchsorted(cum_counts_t, select_seqs, right=True) - 1
+    
+    new_history_tuples = []
+    new_target_tuples = []
+    new_user_ids = []
+
+    for idx_in_selection, row_idx in enumerate(row_indices):
+        # get the sequence index and their original history length
+        row_idx = row_idx.item()
+        N = full_lengths[row_idx]
+        # get the local index within the selected sequence
+        global_idx = select_seqs[idx_in_selection].item()
+        local_idx = global_idx - cum_counts[row_idx]
+        
+        # number of valid sub-sequences that can start at index 'start' is (N - start - 1)
+        # this block size is subtracted from local_idx until it fits inside the current block
+        start = 0
+        while local_idx >= (N - start - 1):
+            local_idx -= (N - start - 1)
+            start += 1
+        
+        # shortest valid sequence requires 1 history item + 1 target item -> start + 2
+        # local_idx is the remainder which determines how many additional items to include in the history beyond the minimum
+        end = start + 2 + local_idx
+        
+        full_seq = full_seqs[row_idx]
+        sliced_hist = full_seq[start : end - 1]
+        sliced_targ = full_seq[end - 1 : end]
+        
+        new_history_tuples.append(sliced_hist)
+        new_target_tuples.append(sliced_targ)
+        new_user_ids.append(user_ids[row_idx])
+
+    # trim to max_len if specified
+    if max_len is not None:
+        new_history_tuples = [h[-max_len:] if h.size(0) > max_len else h for h in new_history_tuples]
+
+    padded_history = torch.nn.utils.rnn.pad_sequence(
+        new_history_tuples, 
+        batch_first=True, 
+        padding_value=-1
+    )
+        
+    stacked_targets = torch.stack(new_target_tuples, dim=0)
+    stacked_users = torch.tensor(new_user_ids, dtype=torch.long)
     
     return {
         "history_tuples": padded_history,
