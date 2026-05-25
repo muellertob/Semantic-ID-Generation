@@ -4,6 +4,7 @@ import torch
 from torch.utils.data import DataLoader
 from omegaconf import OmegaConf
 import os
+from functools import partial
 
 from modules.recommender import TigerSeq2Seq
 from data.loader import load_amazon_sequences
@@ -41,7 +42,6 @@ def run_testing(config_path, semantic_ids_path, model_path):
     test_dataset = SemanticIDSequenceDataset(
         history_data=sequences,
         semantic_ids=semantic_ids,
-        max_len=config.seq2seq.get('max_history_len', 20),
         mode='test'
     )
     
@@ -52,11 +52,13 @@ def run_testing(config_path, semantic_ids_path, model_path):
     metric_batch_size = max(1, config.seq2seq.get('batch_size', 256) // 2)
     logger.info(f"Using Metrics Batch Size = {metric_batch_size}")
     
+    test_collate_fn = partial(collate_fn, max_len=config.seq2seq.get('max_history_len', 20))
+    
     test_loader = DataLoader(
         test_dataset,
         batch_size=metric_batch_size,
         shuffle=False,
-        collate_fn=collate_fn,
+        collate_fn=test_collate_fn,
         num_workers=num_workers,
         persistent_workers=persistent_workers
     )

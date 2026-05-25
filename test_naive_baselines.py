@@ -5,6 +5,7 @@ from torch.utils.data import DataLoader
 from omegaconf import OmegaConf
 import os
 from collections import Counter
+from functools import partial
 from tqdm import tqdm
 
 from data.loader import load_amazon_sequences
@@ -81,15 +82,16 @@ def run_baselines(config_path, semantic_ids_path, k_list=[5, 10, 20]):
     test_dataset = SemanticIDSequenceDataset(
         history_data=sequences,
         semantic_ids=semantic_ids,
-        max_len=config.seq2seq.get('max_history_len', 20),
         mode='test'
     )
+    
+    test_collate_fn = partial(collate_fn, max_len=config.seq2seq.get('max_history_len', 20))
     
     test_loader = DataLoader(
         test_dataset,
         batch_size=512,
         shuffle=False,
-        collate_fn=collate_fn
+        collate_fn=test_collate_fn
     )
     
     random_accumulator = MetricAccumulator(k_list=k_list, num_layers=tuple_size)
