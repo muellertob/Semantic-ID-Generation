@@ -106,7 +106,7 @@ def run_generation(config_path, model_path, output_path, batch_size=64, run_eval
         
     logger.info(f"Resolved Configuration:\n{OmegaConf.to_yaml(config)}")
     
-    # Read values from config if present, falling back to function arguments
+    # read values from config if present, falling back to function arguments
     generation_config = config.get('generation', {})
     if generation_config:
         batch_size = generation_config.get('batch_size', batch_size)
