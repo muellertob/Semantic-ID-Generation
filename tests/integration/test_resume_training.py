@@ -232,3 +232,35 @@ class TestWarmupOverride:
             f"LR ({last_lr:.6f}) must be below initial LR "
             f"({config['seq2seq']['learning_rate']}) after warmup completes"
         )
+
+
+class TestConfigOverrides:
+
+    @patch("train_seq2seq.compute_metrics",
+           return_value=(FAKE_RECALL, FAKE_NDCG, FAKE_HIER))
+    @patch("train_seq2seq.load_amazon_sequences")
+    @patch("train_seq2seq.TigerSeq2Seq")
+    def test_overrides_respected(
+            self, mock_model_class, mock_load_data, _,
+            seq2seq_config, semids_path, mock_seq2seq_model, mock_amazon_sequences):
+        """Verify dot-list overrides successfully update configuration parameters (e.g. learning rate)."""
+        from train_seq2seq import run_training
+        import torch.optim as optim
+
+        mock_model_class.return_value = mock_seq2seq_model
+        mock_load_data.return_value = (mock_amazon_sequences, 10, 20)
+        _, config_path = seq2seq_config
+
+        captured_lr = None
+        original_adamw = optim.AdamW
+
+        def capture_lr(*args, **kwargs):
+            nonlocal captured_lr
+            captured_lr = kwargs.get('lr')
+            return original_adamw(*args, **kwargs)
+
+        overrides = ["seq2seq.learning_rate=0.1234", "seq2seq.early_stopping=False"]
+        with patch("train_seq2seq.optim.AdamW", side_effect=capture_lr):
+            run_training(config_path, semids_path, overrides=overrides)
+
+        assert captured_lr == 0.1234
