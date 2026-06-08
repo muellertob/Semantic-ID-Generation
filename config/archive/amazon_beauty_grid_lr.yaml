@@ -1,0 +1,38 @@
+# data loader configuration
+data:
+  dataset: "amazon"
+  category: "beauty"
+
+# seq2seq configuration (TIGER paper implementation)
+seq2seq:
+  d_model: 128
+  d_kv: 64
+  d_ff: 1024
+  num_layers: 4
+  num_heads: 6
+  dropout: 0.1
+  activation_fn: "relu"
+  
+  # optimization
+  learning_rate: 5e-5
+  weight_decay: 1e-6
+  use_lr_scheduler: False
+  warmup_steps: 1000
+  batch_size: 256
+  
+  # data
+  max_history_len: 20
+  user_tokens: 2000
+  num_codebook_layers: 3
+  codebook_clusters: 128
+  data_augmentation: True
+  
+  # training loop
+  num_epochs: 2000
+
+# additional configuration
+general:
+  use_wandb: True
+  wandb_project_recommender: "mt-amazon-recommender"
+  wandb_entity: "tobias-mueller99-johannes-kepler-universit-t-linz"
+  save_model: True
