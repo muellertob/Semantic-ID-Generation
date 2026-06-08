@@ -28,6 +28,9 @@ seq2seq:
   
   # training loop
   num_epochs: 2000
+  early_stopping: True
+  early_stopping_patience: 7
+  resume_optimizer: True
 
 # additional configuration
 general:

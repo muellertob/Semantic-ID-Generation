@@ -101,11 +101,19 @@ def compute_metrics(model, dataloader, device, k_list=[5, 10]):
     metrics_report = accumulator.compute()
     return metrics_report['recall'], metrics_report['ndcg'], metrics_report['hierarchical']
 
-def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_override=None):
+def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_override=None, overrides=None):
     """
     Orchestrate TIGER Seq2Seq training.
     """
     config = OmegaConf.load(config_path)
+    if overrides:
+        cli_conf = OmegaConf.from_dotlist(overrides)
+        config = OmegaConf.merge(config, cli_conf)
+        
+    logger.info(f"Configuration:\n{OmegaConf.to_yaml(config)}")
+    
+    resume_optimizer = config.seq2seq.get('resume_optimizer', True)
+    early_stopping = config.seq2seq.get('early_stopping', True)
     device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
     
     logger.info(f"Using device: {device}")
@@ -114,7 +122,7 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
     if config.general.get('use_wandb', False):
         wandb_init(config, project=config.general.wandb_project_recommender)
 
-    # Use WandB run name as base model ID; fall back to a generated model ID.
+    # use WandB run name as base model ID; fall back to a generated model ID.
     _fallback_id = generate_model_id(config)
     recommender_run_name = get_run_name(fallback=_fallback_id)
     logger.info(f"Recommender run name: {recommender_run_name}")
@@ -234,7 +242,8 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
             
         checkpoint = torch.load(resume_path, map_location=device, weights_only=False)
         model.load_state_dict(checkpoint['model_state_dict'])
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        if resume_optimizer:
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         
         # checkpoint saves the epoch that just finished, so we start from the next one
         start_epoch = checkpoint['epoch'] + 1
@@ -288,7 +297,7 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
     logger.info("Starting Training Loop...")
     num_epochs = config.seq2seq.get('num_epochs', 2300)
     
-    early_stopping_patience = 7 # cycles of metrics evaluation (every 5 epochs)
+    early_stopping_patience = config.seq2seq.get('early_stopping_patience', 7) # cycles of metrics evaluation
     recall_no_improve = 0
     
     for epoch in range(start_epoch, num_epochs):
@@ -370,7 +379,7 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
             else:
                 recall_no_improve += 1
                 logger.info(f"No improvement in Recall@5 for {recall_no_improve} evaluations.")
-                if recall_no_improve >= early_stopping_patience:
+                if early_stopping and early_stopping_patience is not None and recall_no_improve >= early_stopping_patience:
                     logger.info(f"Early stopping triggered. Recall@5 hasn't improved for {early_stopping_patience} evaluations.")
                     stop_training = True
 
@@ -398,6 +407,6 @@ if __name__ == "__main__":
     parser.add_argument('--semids', type=str, required=True, help='Path to generated Semantic IDs (.pt file)')
     parser.add_argument('--resume', type=str, help='Path to checkpoint file to resume from')
     parser.add_argument('--warmup_steps', type=int, help='Override warmup_steps from config')
-    args = parser.parse_args()
+    args, overrides = parser.parse_known_args()
     
-    run_training(args.config, args.semids, args.resume, args.warmup_steps)
+    run_training(args.config, args.semids, args.resume, args.warmup_steps, overrides)

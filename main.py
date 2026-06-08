@@ -61,14 +61,14 @@ def main():
     test_sasrec_parser.add_argument("--config", type=str, required=True, help="Path to configuration file")
     test_sasrec_parser.add_argument("--model_path", type=str, required=True, help="Path to trained model checkpoint")
 
-    args = parser.parse_args()
-
+    args, overrides = parser.parse_known_args()
+ 
     if args.command == 'train-rqkmeans':
         run_rqkmeans(args.config)
     elif args.command == 'train-rqvae':
         run_rqvae(args.config)
     elif args.command == 'train-seq2seq':
-        run_seq2seq(args.config, args.semids, args.resume, args.warmup_steps)
+        run_seq2seq(args.config, args.semids, args.resume, args.warmup_steps, overrides)
     elif args.command == 'test-seq2seq':
         test_seq2seq(args.config, args.semids, args.model_path)
     elif args.command == 'train-sasrec':
