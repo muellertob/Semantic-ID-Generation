@@ -26,7 +26,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def run_training(config_path: str | None, _config_override=None) -> None:
+def run_training(config_path: str | None, _config_override=None, overrides=None) -> None:
     """
     Run the full RQ-KMeans training and ID generation pipeline.
 
@@ -39,6 +39,10 @@ def run_training(config_path: str | None, _config_override=None) -> None:
         config = _config_override
     else:
         config = OmegaConf.load(config_path)
+        if overrides:
+            config = OmegaConf.merge(config, OmegaConf.from_dotlist(overrides))
+
+    logger.info(f"Configuration:\n{OmegaConf.to_yaml(config)}")
 
     embeddings = load_data(config, split="all")
     logger.info(f"Loaded {len(embeddings)} item embeddings, dim={embeddings.shape[1]}")
@@ -55,12 +59,9 @@ def run_training(config_path: str | None, _config_override=None) -> None:
     logger.info(f"Raw semantic IDs shape: {sem_ids_raw.shape}")
 
     # evaluate on raw SIDs before collision resolution
-    plot_dir = getattr(config.general, "plot_dir", None)
     evaluate_semids(
-        embeddings=embeddings,
         raw_semids=sem_ids_raw,
         config=config,
-        plot_dir=plot_dir,
     )
 
     # collision resolution
@@ -90,8 +91,8 @@ def main():
     parser = argparse.ArgumentParser(description="Train RQ-KMeans and generate semantic IDs")
     parser.add_argument("--config", type=str, required=True,
                         help="Path to YAML configuration file")
-    args = parser.parse_args()
-    run_training(args.config)
+    args, overrides = parser.parse_known_args()
+    run_training(args.config, overrides=overrides)
 
 
 if __name__ == "__main__":

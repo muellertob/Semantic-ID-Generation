@@ -48,7 +48,6 @@ def main():
     gen_parser.add_argument('--config', type=str, required=True, help='Path to configuration file')
     gen_parser.add_argument('--model_path', type=str, required=True, help='Path to trained RQ-VAE model')
     gen_parser.add_argument('--output_path', type=str, default='outputs/semids.pt', help='Path to save output')
-    gen_parser.add_argument('--temperature', type=float, default=0.5, help='Sampling temperature')
     gen_parser.add_argument('--batch_size', type=int, default=64, help='Batch size')
 
     # SASRec benchmark
@@ -64,26 +63,26 @@ def main():
     args, overrides = parser.parse_known_args()
  
     if args.command == 'train-rqkmeans':
-        run_rqkmeans(args.config)
+        run_rqkmeans(args.config, overrides=overrides)
     elif args.command == 'train-rqvae':
-        run_rqvae(args.config)
+        run_rqvae(args.config, overrides=overrides)
     elif args.command == 'train-seq2seq':
         run_seq2seq(args.config, args.semids, args.resume, args.warmup_steps, overrides)
     elif args.command == 'test-seq2seq':
-        test_seq2seq(args.config, args.semids, args.model_path)
+        test_seq2seq(args.config, args.semids, args.model_path, overrides=overrides)
     elif args.command == 'train-sasrec':
         from train_sasrec import run_training as run_sasrec
-        run_sasrec(args.config, resume_path=args.resume)
+        run_sasrec(args.config, resume_path=args.resume, overrides=overrides)
     elif args.command == 'test-sasrec':
         from test_sasrec import run_testing as test_sasrec
-        test_sasrec(args.config, args.model_path)
+        test_sasrec(args.config, args.model_path, overrides=overrides)
     elif args.command == 'generate-ids':
         run_generation(
             config_path=args.config,
             model_path=args.model_path,
             output_path=args.output_path,
-            temperature=args.temperature,
-            batch_size=args.batch_size
+            batch_size=args.batch_size,
+            overrides=overrides
         )
     else:
         parser.print_help()

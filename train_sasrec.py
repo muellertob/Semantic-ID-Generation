@@ -73,7 +73,7 @@ def evaluate_metrics(model, dataset, device, k_list, num_items):
     return metrics
 
 
-def run_training(config_path, resume_path=None):
+def run_training(config_path, resume_path=None, overrides=None):
     """
     Main SASRec training loop.
 
@@ -82,6 +82,10 @@ def run_training(config_path, resume_path=None):
         resume_path: optional path to checkpoint for resuming
     """
     config = OmegaConf.load(config_path)
+    if overrides:
+        config = OmegaConf.merge(config, OmegaConf.from_dotlist(overrides))
+        
+    logger.info(f"Configuration:\n{OmegaConf.to_yaml(config)}")
     logging.basicConfig(level=logging.INFO)
 
     device = torch.device(

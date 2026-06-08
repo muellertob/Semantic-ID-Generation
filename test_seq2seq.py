@@ -14,11 +14,15 @@ from train_seq2seq import compute_metrics
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def run_testing(config_path, semantic_ids_path, model_path):
+def run_testing(config_path, semantic_ids_path, model_path, overrides=None):
     """
     Test TIGER Seq2Seq model on the test split.
     """
     config = OmegaConf.load(config_path)
+    if overrides:
+        config = OmegaConf.merge(config, OmegaConf.from_dotlist(overrides))
+        
+    logger.info(f"Configuration:\n{OmegaConf.to_yaml(config)}")
     device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
     
     logger.info(f"Using device: {device}")
@@ -114,6 +118,6 @@ if __name__ == "__main__":
     parser.add_argument('--config', type=str, required=True, help='Path to configuration file')
     parser.add_argument('--semids', type=str, required=True, help='Path to generated Semantic IDs (.pt file)')
     parser.add_argument('--model_path', type=str, required=True, help='Path to trained model checkpoint')
-    args = parser.parse_args()
+    args, overrides = parser.parse_known_args()
     
-    run_testing(args.config, args.semids, args.model_path)
+    run_testing(args.config, args.semids, args.model_path, overrides)

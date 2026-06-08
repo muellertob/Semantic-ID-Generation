@@ -31,7 +31,7 @@ def load_trained_model(model_path, config, device, input_dim):
     
     return model
 
-def generate_all_semids(model, data, device, batch_size=64, temperature=1.0):
+def generate_all_semids(model, data, device, batch_size=64):
     """Generate semantic IDs for all items in the dataset."""
     model.eval()
     all_semids = []
@@ -40,8 +40,8 @@ def generate_all_semids(model, data, device, batch_size=64, temperature=1.0):
         for i in range(0, len(data), batch_size):
             batch = data[i:i+batch_size].to(device, dtype=torch.float32)
             
-            # Get semantic IDs for the batch
-            output = model.get_semantic_ids(batch, temperature=temperature)
+            # Get semantic IDs for the batch (uses default temperature 1.0, which is ignored in eval mode)
+            output = model.get_semantic_ids(batch)
             semids = output.sem_ids  # Shape: (batch_size, num_layers)
             
             all_semids.append(semids.cpu())
@@ -95,12 +95,22 @@ def resolve_collisions(semids, max_collisions):
     
     return final_ids
 
-def run_generation(config_path, model_path, output_path, temperature=0.5, batch_size=64, run_eval=True):
+def run_generation(config_path, model_path, output_path, batch_size=64, run_eval=True, overrides=None):
     """
     Orchestrate semantic ID generation.
     """
     # load configuration
     config = OmegaConf.load(config_path)
+    if overrides:
+        config = OmegaConf.merge(config, OmegaConf.from_dotlist(overrides))
+        
+    logger.info(f"Resolved Configuration:\n{OmegaConf.to_yaml(config)}")
+    
+    # Read values from config if present, falling back to function arguments
+    generation_config = config.get('generation', {})
+    if generation_config:
+        batch_size = generation_config.get('batch_size', batch_size)
+        
     device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
     
     logger.info(f"Using device: {device}")
@@ -118,8 +128,7 @@ def run_generation(config_path, model_path, output_path, temperature=0.5, batch_
     logger.info("Generating semantic IDs...")
     semids = generate_all_semids(
         model, data, device, 
-        batch_size=batch_size,
-        temperature=temperature
+        batch_size=batch_size
     )
     
     logger.info(f"Generated raw semantic IDs shape: {semids.shape}")
@@ -138,8 +147,7 @@ def run_generation(config_path, model_path, output_path, temperature=0.5, batch_
     torch.save({
         'semantic_ids': final_semids,
         'config': config,
-        'num_items': len(data),
-        'temperature': temperature
+        'num_items': len(data)
     }, output_path)
     
     logger.info(f"Semantic IDs saved to: {output_path}")
@@ -159,22 +167,20 @@ def main():
                        help='Path to the trained model file')
     parser.add_argument('--output_path', type=str, default='outputs/semids.pt',
                        help='Path to save the semantic IDs')
-    parser.add_argument('--temperature', type=float, default=0.5,
-                       help='Temperature for Gumbel Softmax (lower = sharper)')
     parser.add_argument('--batch_size', type=int, default=64,
                        help='Batch size for processing')
     parser.add_argument('--no_eval', action='store_true',
                        help='Skip evaluation metrics and plots (faster for quick re-generation)')
 
-    args = parser.parse_args()
+    args, overrides = parser.parse_known_args()
 
     run_generation(
         config_path=args.config,
         model_path=args.model_path,
         output_path=args.output_path,
-        temperature=args.temperature,
         batch_size=args.batch_size,
         run_eval=not args.no_eval,
+        overrides=overrides,
     )
 
 if __name__ == "__main__":

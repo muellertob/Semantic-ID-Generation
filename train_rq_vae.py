@@ -11,6 +11,7 @@ import wandb
 import logging
 import random
 import numpy as np
+import os
 from omegaconf import OmegaConf
 from modules.rqvae.scheduler import create_temperature_scheduler
 from schemas.quantization import QuantizeForwardMode, QuantizeDistance
@@ -217,12 +218,15 @@ def train(model, data, optimizer, scheduler, num_epochs, device, config):
 
     return results
 
-def run_training(config_path):
+def run_training(config_path, overrides=None):
     """
     Orchestrate RQ-VAE training.
     """
     # Load configuration
     config = OmegaConf.load(config_path)
+    if overrides:
+        config = OmegaConf.merge(config, OmegaConf.from_dotlist(overrides))
+    logger.info(f"Configuration:\n{OmegaConf.to_yaml(config)}")
     seed = getattr(config.train, 'seed', 42)
     set_seed(seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
