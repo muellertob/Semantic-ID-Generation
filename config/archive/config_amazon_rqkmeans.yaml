@@ -9,7 +9,7 @@ data:
 model:
   n_layers: 3              # used by train_rqkmeans
   num_codebook_layers: 3   # used by train_seq2seq; model adds 1 collision layer → item_offsets shape [4]
-  codebook_clusters: 128
+  codebook_clusters: 256
   n_iters: 100
   normalize_residuals: True
   # fields required by generate_model_id / wandb_init (not meaningful for RQ-KMeans)
@@ -28,8 +28,8 @@ train:
 general:
   seed: 10
   save_model: True
-  model_path: "models/rqkmeans.pt"
-  output_path: "outputs/rqkmeans_semids.pt"
+  model_path: "models/rqkmeans/rqkmeans.pt"
+  output_path: "outputs/rqkmeans/rqkmeans_semids.pt"
   plot_dir: "outputs/rqkmeans_eval_plots"
   use_wandb: True
   wandb_project_rqvae: "mt-amazon-rqvae"
