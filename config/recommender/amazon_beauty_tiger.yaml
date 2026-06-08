@@ -16,7 +16,8 @@ seq2seq:
   # optimization
   learning_rate: 5e-4
   weight_decay: 1e-6
-  use_lr_scheduler: False
+  use_lr_scheduler: True # differs slightly from TIGER; it uses fixed lr during warmup and more steps (10k)
+  warmup_steps: 1000
   batch_size: 256
   
   # data
@@ -27,7 +28,7 @@ seq2seq:
   data_augmentation: True
   
   # training loop
-  num_epochs: 2000
+  num_epochs: 500
 
 # additional configuration
 general:
