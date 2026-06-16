@@ -1,6 +1,6 @@
-from typing import NamedTuple
 from torch import Tensor
 from enum import Enum
+from dataclasses import dataclass, field
 
 class QuantizeForwardMode(Enum):
     GUMBEL_SOFTMAX = 1
@@ -10,7 +10,9 @@ class QuantizeDistance(Enum):
     L2 = 1
     COSINE = 2
 
-class QuantizeOutput(NamedTuple):
+@dataclass
+class QuantizeOutput:
     embeddings: Tensor
     ids: Tensor
     loss: Tensor
+    metrics: dict[str, Tensor] = field(default_factory=dict)
