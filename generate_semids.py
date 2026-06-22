@@ -26,7 +26,7 @@ def load_trained_model(model_path, config, device, input_dim):
     model.eval()
     
     # Mark all quantization layers as initialized to prevent k-means reinit
-    for layer in model.quantization_layers:
+    for layer in model.quantizer.quantization_layers:
         layer.kmeans_initted = True
     
     return model
@@ -41,8 +41,7 @@ def generate_all_semids(model, data, device, batch_size=64):
             batch = data[i:i+batch_size].to(device, dtype=torch.float32)
             
             # Get semantic IDs for the batch (uses default temperature 1.0, which is ignored in eval mode)
-            output = model.get_semantic_ids(batch)
-            semids = output.sem_ids  # Shape: (batch_size, num_layers)
+            semids = model.get_semantic_ids(batch) # Shape: (batch_size, num_layers)
             
             all_semids.append(semids.cpu())
     
