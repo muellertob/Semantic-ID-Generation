@@ -17,7 +17,9 @@ from modules.rqvae.scheduler import create_temperature_scheduler
 from schemas.quantization import QuantizeForwardMode, QuantizeDistance
 from utils.wandb import wandb_init, get_run_name, log_model_artifact
 from data.factory import load_data
-from modules.rqvae import RQ_VAE
+from modules.vae.model import QuantizedAutoEncoder
+from modules.rqvae.networks import Encoder, Decoder
+from modules.rqvae.quantization import ResidualVectorQuantizer
 from utils.model_id_generation import generate_model_id
 
 logger = logging.getLogger(__name__)
@@ -57,17 +59,32 @@ def create_model(config, input_dim):
     else:
         raise ValueError(f"Unknown distance mode: {distance_method_str}")
 
-    model = RQ_VAE(
-        input_dim=input_dim,
-        latent_dim=config.model.latent_dimension,
-        hidden_dims=config.model.hidden_dimensions,
-        codebook_size=config.model.codebook_clusters,
-        codebook_kmeans_init=True,
-        codebook_sim_vq=False,
+    encoder = Encoder(
+        input_dim=input_dim, 
+        hidden_dims=config.model.hidden_dimensions, 
+        latent_dim=config.model.latent_dimension
+    )
+    decoder = Decoder(
+        output_dim=input_dim, 
+        hidden_dims=config.model.hidden_dimensions[::-1], 
+        latent_dim=config.model.latent_dimension
+    )
+    quantizer = ResidualVectorQuantizer(
         n_quantization_layers=config.model.num_codebook_layers,
+        latent_dim=config.model.latent_dimension,
+        codebook_size=config.model.codebook_clusters,
         commitment_weight=config.model.commitment_weight,
-        quantization_method=quantization_method,
+        do_kmeans_init=True,
+        sim_vq=False,
+        forward_mode=quantization_method,
         distance_mode=distance_mode,
+    )
+    model = QuantizedAutoEncoder(
+        encoder=encoder, 
+        decoder=decoder, 
+        quantizer=quantizer, 
+        input_dim=input_dim, 
+        latent_dim=config.model.latent_dimension
     )
 
     logger.info(f"Created RQ-VAE model with {quantization_method_str} quantization and {distance_method_str} distance")
@@ -125,16 +142,7 @@ def train(model, data, optimizer, scheduler, num_epochs, device, config):
     train_loader = DataLoader(data, batch_size=config.data.batch_size, shuffle=True)
 
     for epoch in epoch_progress:
-        total_loss = 0
-        total_reconstruction_loss = 0
-        total_commit_loss = 0
-        p_unique = 0
-        total_layer_coverages = None
-        total_layer_entropies = None
-        total_first_residual_norm = 0
-        total_last_residual_norm = 0
-        total_first_centroids_norm = 0
-        total_last_centroids_norm = 0
+        total_metrics = {}
 
         # Get current temperature
         current_temperature = 1.0  # Default for STE
@@ -159,39 +167,24 @@ def train(model, data, optimizer, scheduler, num_epochs, device, config):
             if scheduler is not None:
                 scheduler.step()
 
-            total_loss += result.loss.item()
-            total_reconstruction_loss += result.reconstruction_loss.item()
-            total_commit_loss += result.rqvae_loss.item()
-            p_unique += result.p_unique_ids.item()
+            total_metrics["Loss"] = total_metrics.get("Loss", 0.0) + result.loss.item()
+            total_metrics["Reconstruction Loss"] = total_metrics.get("Reconstruction Loss", 0.0) + result.reconstruction_loss.item()
+            total_metrics["Quantization Loss"] = total_metrics.get("Quantization Loss", 0.0) + result.quantization_loss.item()
 
-            coverages = result.layer_coverages.cpu()
-            entropies = result.layer_entropies.cpu()
-            if total_layer_coverages is None:
-                total_layer_coverages = coverages.clone()
-                total_layer_entropies = entropies.clone()
-            else:
-                total_layer_coverages += coverages
-                total_layer_entropies += entropies
-            total_first_residual_norm += result.first_residual_norm.item()
-            total_last_residual_norm += result.last_residual_norm.item()
-            total_first_centroids_norm += result.first_centroids_norm.item()
-            total_last_centroids_norm += result.last_centroids_norm.item()
+            for k, v in result.metrics.items():
+                if v.numel() > 1:
+                    if k not in total_metrics:
+                        total_metrics[k] = v.cpu().clone()
+                    else:
+                        total_metrics[k] += v.cpu()
+                else:
+                    total_metrics[k] = total_metrics.get(k, 0.0) + (v.item() if isinstance(v, torch.Tensor) else v)
 
         # Calculate epoch statistics
         n_batches = len(train_loader)
-        avg_layer_coverages = total_layer_coverages / n_batches
-        avg_layer_entropies = total_layer_entropies / n_batches
-
+        
         epoch_stats = {
             "Epoch": epoch,
-            "Loss": total_loss / n_batches,
-            "Reconstruction Loss": total_reconstruction_loss / n_batches,
-            "RQ-VAE Loss": total_commit_loss / n_batches,
-            "Prob Unique IDs": p_unique / n_batches,
-            "Avg Coverage": avg_layer_coverages.mean().item(),
-            "Avg Entropy": avg_layer_entropies.mean().item(),
-            "First Residual Norm": total_first_residual_norm / n_batches,
-            "Last Residual Norm": total_last_residual_norm / n_batches,
             "Learning Rate": optimizer.param_groups[0]['lr'],
         }
 
@@ -199,18 +192,38 @@ def train(model, data, optimizer, scheduler, num_epochs, device, config):
         if is_gumbel_softmax and temperature_scheduler is not None:
             epoch_stats["Temperature"] = current_temperature
 
-        # Early stopping condition
-        #if p_unique / n_batches >= 1:
-        #    logger.info(f"Early stopping at epoch {epoch}: All IDs are unique")
-        #    break
+        wandb_stats = dict(epoch_stats)
+
+        for k, v in total_metrics.items():
+            if isinstance(v, torch.Tensor) and v.numel() > 1:
+                avg_array = v / n_batches
+                epoch_stats[k] = avg_array.mean().item()
+                if config.general.use_wandb:
+                    for i in range(len(avg_array)):
+                        if "coverage" in k:
+                            wandb_stats[f"layer_{i}/coverage"] = avg_array[i].item()
+                        elif "entrop" in k:
+                            wandb_stats[f"layer_{i}/entropy"] = avg_array[i].item()
+                        else:
+                            wandb_stats[f"layer_{i}/{k}"] = avg_array[i].item()
+            else:
+                epoch_stats[k] = v / n_batches
+                
+                # keep compatibility with old wandb chart names
+                if k == "first_centroids_norm":
+                    wandb_stats["First Centroids Norm"] = epoch_stats[k]
+                elif k == "last_centroids_norm":
+                    wandb_stats["Last Centroids Norm"] = epoch_stats[k]
+                elif k == "first_residual_norm":
+                    wandb_stats["First Residual Norm"] = epoch_stats[k]
+                elif k == "last_residual_norm":
+                    wandb_stats["Last Residual Norm"] = epoch_stats[k]
+                elif k == "p_unique_ids":
+                    wandb_stats["Prob Unique IDs"] = epoch_stats[k]
+                else:
+                    wandb_stats[k] = epoch_stats[k]
 
         if config.general.use_wandb:
-            wandb_stats = dict(epoch_stats)
-            for i in range(len(avg_layer_coverages)):
-                wandb_stats[f"layer_{i}/coverage"] = avg_layer_coverages[i].item()
-                wandb_stats[f"layer_{i}/entropy"] = avg_layer_entropies[i].item()
-            wandb_stats["First Centroids Norm"] = total_first_centroids_norm / n_batches
-            wandb_stats["Last Centroids Norm"] = total_last_centroids_norm / n_batches
             wandb.log(wandb_stats, step=epoch)
 
         epoch_progress.set_postfix(epoch_stats)

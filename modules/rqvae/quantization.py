@@ -174,3 +174,116 @@ class Quantization(nn.Module):
             ids=ids,
             loss=loss,
         )
+
+class ResidualVectorQuantizer(nn.Module):
+    def __init__(
+        self, 
+        n_quantization_layers: int, 
+        latent_dim: int, 
+        codebook_size: int, 
+        commitment_weight: float = 0.25, 
+        do_kmeans_init: bool = True, 
+        sim_vq: bool = False, 
+        forward_mode: QuantizeForwardMode = QuantizeForwardMode.STE, 
+        distance_mode: QuantizeDistance = QuantizeDistance.L2
+    ):
+        super().__init__()
+        self.n_quantization_layers = n_quantization_layers
+        self.codebook_size = codebook_size
+        self.quantization_layers = nn.ModuleList([
+            Quantization(
+                latent_dim=latent_dim,
+                codebook_size=codebook_size,
+                commitment_weight=commitment_weight,
+                do_kmeans_init=do_kmeans_init,
+                sim_vq=sim_vq,
+                forward_mode=forward_mode,
+                distance_mode=distance_mode,
+            )
+            for _ in range(n_quantization_layers)
+        ])
+        
+    def set_quantization_method(self, method: QuantizeForwardMode) -> None:
+        for layer in self.quantization_layers:
+            layer.set_quantization_method(method)
+            
+    def kmeans_init(self, z: Tensor, temperature: float = 1.0) -> None:
+        """Initializes all quantization layers using k-means."""
+        res = z
+        for layer in self.quantization_layers:
+            layer._kmeans_init(res)
+            # use temperature to get the right soft/hard embedding during init
+            emb = layer.get_item_embeddings(layer(res, temperature=temperature).ids)
+            res = res - emb
+
+    def forward(self, x: Tensor, temperature: float = 1.0, **kwargs) -> QuantizeOutput:
+        res = x
+        quantize_loss = torch.tensor(0.0, device=x.device)
+        embs, residuals, sem_ids = [], [], []
+        first_residual = None
+
+        for i, layer in enumerate(self.quantization_layers):
+            residuals.append(res)
+            quantized = layer(res, temperature=temperature)
+            quantize_loss = quantize_loss + quantized.loss
+            emb, id = quantized.embeddings, quantized.ids
+            res = res - emb  # update residuals
+            if i == 0:
+                first_residual = res
+            sem_ids.append(id) # list of tensors containing the discrete IDs at each layer
+            embs.append(emb) # list of tensors containing the quantized embeddings at each layer
+
+        final_residual = res
+
+        embs_tensor = torch.stack(embs) # shape: (n_quantization_layers, batch, latent_dim)
+        
+        # summing across the hierarchy dimension (dim=0) rebuilds the final continuous representation
+        quantized_latent = embs_tensor.sum(dim=0) # shape: (batch, latent_dim)
+        
+        sem_ids_tensor = torch.stack(sem_ids, dim=1) # shape: (batch, n_quantization_layers)
+        
+        with torch.no_grad():
+            embs_norm = embs_tensor.norm(dim=-1).T
+            
+            # fraction of unique full-tuple IDs in the batch (cpu: unique_dim not on MPS)
+            p_unique_ids = torch.tensor(
+                torch.unique(sem_ids_tensor.cpu(), dim=0).shape[0] / sem_ids_tensor.shape[0],
+                device=x.device
+            )
+
+            # residual norms relative to the encoder output
+            input_norm = residuals[0].norm(dim=1).mean().clamp(min=1e-8)
+            first_residual_norm = first_residual.norm(dim=1).mean() / input_norm
+            last_residual_norm = final_residual.norm(dim=1).mean() / input_norm
+
+            # codebook vector norms (first and last layer)
+            first_centroids_norm = self.quantization_layers[0].get_codebook().norm(dim=1).mean()
+            last_centroids_norm = self.quantization_layers[-1].get_codebook().norm(dim=1).mean()
+            
+            # per-layer: fraction of codebook used + Shannon entropy of assignments
+            layer_coverages, layer_entropies = [], []
+            for ids in sem_ids:
+                unique_ids, counts = torch.unique(ids, return_counts=True)
+                layer_coverages.append(unique_ids.shape[0] / self.codebook_size)
+                probs = counts.float() / counts.sum()
+                layer_entropies.append(-(probs * probs.log()).sum())
+            layer_coverages = torch.tensor(layer_coverages, device=x.device)
+            layer_entropies = torch.stack(layer_entropies)
+            
+        metrics = {
+            "p_unique_ids": p_unique_ids,
+            "embs_norm": embs_norm,
+            "first_residual_norm": first_residual_norm,
+            "last_residual_norm": last_residual_norm,
+            "first_centroids_norm": first_centroids_norm,
+            "last_centroids_norm": last_centroids_norm,
+            "layer_coverages": layer_coverages,
+            "layer_entropies": layer_entropies
+        }
+        
+        return QuantizeOutput(
+            embeddings=quantized_latent, 
+            ids=sem_ids_tensor, 
+            loss=quantize_loss, 
+            metrics=metrics
+        )

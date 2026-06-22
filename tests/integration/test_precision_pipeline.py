@@ -44,7 +44,9 @@ def test_full_pipeline_precision():
             
         if isinstance(output, torch.Tensor):
             check_tensor(output, "produced output")
-        elif hasattr(output, 'embeddings'):  # check custom schema output types
+        elif hasattr(output, 'reconstruction_loss'):  # check custom schema output types
+            check_tensor(output.loss, "produced loss")
+        elif hasattr(output, 'embeddings'):  # QuantizeOutput
             check_tensor(output.embeddings, "produced embeddings")
             check_tensor(output.loss, "produced loss")
         elif isinstance(output, (list, tuple)):
