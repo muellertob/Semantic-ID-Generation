@@ -5,6 +5,7 @@ from torch import Tensor
 from sklearn.cluster import KMeans
 
 from schemas.quantization import QuantizeOutput, QuantizeForwardMode, QuantizeDistance
+from utils.metrics import calculate_entropy_and_coverage
 
 
 class QuantizeLoss(nn.Module):
@@ -261,14 +262,7 @@ class ResidualVectorQuantizer(nn.Module):
             last_centroids_norm = self.quantization_layers[-1].get_codebook().norm(dim=1).mean()
             
             # per-layer: fraction of codebook used + Shannon entropy of assignments
-            layer_coverages, layer_entropies = [], []
-            for ids in sem_ids:
-                unique_ids, counts = torch.unique(ids, return_counts=True)
-                layer_coverages.append(unique_ids.shape[0] / self.codebook_size)
-                probs = counts.float() / counts.sum()
-                layer_entropies.append(-(probs * probs.log()).sum())
-            layer_coverages = torch.tensor(layer_coverages, device=x.device)
-            layer_entropies = torch.stack(layer_entropies)
+            layer_coverages, layer_entropies = calculate_entropy_and_coverage(sem_ids, self.codebook_size)
             
         metrics = {
             "p_unique_ids": p_unique_ids,

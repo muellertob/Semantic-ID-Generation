@@ -8,7 +8,7 @@ Covers:
 import math
 import pytest
 import torch
-from utils.metrics import MetricAccumulator
+from utils.metrics import MetricAccumulator, calculate_entropy_and_coverage
 
 
 class TestMetricAccumulator:
@@ -128,3 +128,30 @@ class TestMetricAccumulator:
         acc.update(pred, target)
         res = acc.compute()
         assert res["recall"][1] == 1.0
+
+
+def test_calculate_entropy_and_coverage_tensor():
+    # Batch size = 4, Layers = 2, Codebook size = 10
+    # Layer 1 has 4 unique values [0, 1, 2, 3] -> coverage 0.4, entropy log(4)
+    # Layer 2 has 1 unique value [5, 5, 5, 5] -> coverage 0.1, entropy 0.0
+    ids = torch.tensor([[0, 5], [1, 5], [2, 5], [3, 5]])
+    
+    coverages, entropies = calculate_entropy_and_coverage(ids, codebook_size=10)
+    
+    assert torch.equal(coverages, torch.tensor([0.4, 0.1]))
+    assert torch.allclose(entropies, torch.tensor([math.log(4), 0.0]))
+    assert coverages.device == ids.device
+    assert entropies.device == ids.device
+
+
+def test_calculate_entropy_and_coverage_list():
+    # Test with list of 1D tensors
+    ids_list = [torch.tensor([0, 1, 2, 3]), torch.tensor([5, 5, 5, 5])]
+    
+    coverages, entropies = calculate_entropy_and_coverage(ids_list, codebook_size=10)
+    
+    assert torch.equal(coverages, torch.tensor([0.4, 0.1]))
+    assert torch.allclose(entropies, torch.tensor([math.log(4), 0.0]))
+    assert coverages.device == ids_list[0].device
+    assert entropies.device == ids_list[0].device
+

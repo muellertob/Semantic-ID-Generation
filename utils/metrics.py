@@ -72,3 +72,41 @@ class MetricAccumulator:
             "hierarchical": {k: float(v / self.total_samples) for k, v in self.hierarchical_recall.items()},
             "total_samples": self.total_samples
         }
+
+def calculate_entropy_and_coverage(ids_or_tensor, codebook_size: int):
+    """
+    Calculate per-layer codebook coverage and Shannon entropy from batch assignments.
+    
+    Args:
+        ids_or_tensor: A list of tensors of shape (batch_size,), or a single 2D tensor
+                       of shape (batch_size, num_layers).
+        codebook_size (int): Size of the codebook.
+        
+    Returns:
+        coverages (torch.Tensor): Coverage fraction per layer, shape (num_layers,)
+        entropies (torch.Tensor): Shannon entropy per layer, shape (num_layers,)
+    """
+    if isinstance(ids_or_tensor, list):
+        layers = ids_or_tensor
+    elif isinstance(ids_or_tensor, torch.Tensor):
+        if ids_or_tensor.dim() == 2:
+            layers = [ids_or_tensor[:, i] for i in range(ids_or_tensor.shape[1])]
+        else:
+            raise ValueError(f"Expected a 2D tensor of shape (batch_size, num_layers), got shape {ids_or_tensor.shape}")
+    else:
+        raise TypeError(f"Unsupported type for metric calculation: {type(ids_or_tensor)}")
+        
+    coverages = []
+    entropies = []
+    
+    for ids in layers:
+        unique_ids, counts = torch.unique(ids, return_counts=True)
+        
+        coverage = torch.tensor(unique_ids.numel() / codebook_size, device=ids.device)
+        coverages.append(coverage)
+        
+        probs = counts.float() / counts.sum()
+        entropy = -(probs * probs.log()).sum()
+        entropies.append(entropy)
+        
+    return torch.stack(coverages), torch.stack(entropies)
