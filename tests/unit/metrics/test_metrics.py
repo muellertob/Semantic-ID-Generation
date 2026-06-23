@@ -8,7 +8,7 @@ Covers:
 import math
 import pytest
 import torch
-from utils.metrics import MetricAccumulator, calculate_entropy_and_coverage
+from utils.metrics import MetricAccumulator, calculate_entropy_and_coverage, calculate_quantizer_metrics
 
 
 class TestMetricAccumulator:
@@ -154,4 +154,76 @@ def test_calculate_entropy_and_coverage_list():
     assert torch.allclose(entropies, torch.tensor([math.log(4), 0.0]))
     assert coverages.device == ids_list[0].device
     assert entropies.device == ids_list[0].device
+
+
+def test_calculate_quantizer_metrics_basic():
+    # Test basic usage with only ids and codebook_size (no residuals, no codebooks)
+    ids = torch.tensor([[0, 5], [1, 5], [2, 5], [3, 5]])
+    metrics = calculate_quantizer_metrics(ids, codebook_size=10)
+    
+    assert "p_unique_ids" in metrics
+    assert "layer_coverages" in metrics
+    assert "layer_entropies" in metrics
+    
+    # 4 unique sequence rows out of 4 batch samples -> 1.0 unique ratio
+    assert metrics["p_unique_ids"].item() == 1.0
+    assert torch.equal(metrics["layer_coverages"], torch.tensor([0.4, 0.1]))
+    assert torch.allclose(metrics["layer_entropies"], torch.tensor([math.log(4), 0.0]))
+    
+    # Check that residual and centroid metrics are not present
+    assert "first_residual_norm" not in metrics
+    assert "last_residual_norm" not in metrics
+    assert "first_residual_rel" not in metrics
+    assert "last_residual_rel" not in metrics
+    assert "first_centroids_norm" not in metrics
+    assert "last_centroids_norm" not in metrics
+
+
+def test_calculate_quantizer_metrics_with_residuals_and_codebooks():
+    ids = torch.tensor([[0, 5], [1, 5], [2, 5], [3, 5]])
+    input_tensor = torch.ones(4, 8) * 3.0  # L2 norm is sqrt(8 * 9) = sqrt(72) = 8.485
+    first_residual = torch.ones(4, 8) * 1.5
+    final_residual = torch.ones(4, 8) * 0.3
+    
+    # 2 layers of codebooks, shape (10, 8)
+    codebooks = [
+        torch.ones(10, 8) * 2.0,
+        torch.ones(10, 8) * 0.5
+    ]
+    
+    metrics = calculate_quantizer_metrics(
+        ids=ids,
+        codebook_size=10,
+        input_tensor=input_tensor,
+        first_residual=first_residual,
+        final_residual=final_residual,
+        codebooks=codebooks
+    )
+    
+    assert "first_residual_norm" in metrics
+    assert "last_residual_norm" in metrics
+    assert "first_residual_rel" in metrics
+    assert "last_residual_rel" in metrics
+    assert "first_centroids_norm" in metrics
+    assert "last_centroids_norm" in metrics
+    
+    # Calculate expected absolute norms
+    sqrt_8 = math.sqrt(8)
+    expected_input_norm = 3.0 * sqrt_8
+    expected_first_res_norm = 1.5 * sqrt_8
+    expected_final_res_norm = 0.3 * sqrt_8
+    
+    assert metrics["first_residual_norm"].item() == pytest.approx(expected_first_res_norm)
+    assert metrics["last_residual_norm"].item() == pytest.approx(expected_final_res_norm)
+    
+    # Ratios
+    assert metrics["first_residual_rel"].item() == pytest.approx(0.5)
+    assert metrics["last_residual_rel"].item() == pytest.approx(0.1)
+    
+    # Codebooks centroids norms
+    expected_cb0_norm = 2.0 * sqrt_8
+    expected_cb1_norm = 0.5 * sqrt_8
+    assert metrics["first_centroids_norm"].item() == pytest.approx(expected_cb0_norm)
+    assert metrics["last_centroids_norm"].item() == pytest.approx(expected_cb1_norm)
+
 

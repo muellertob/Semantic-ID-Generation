@@ -101,7 +101,7 @@ def calculate_entropy_and_coverage(ids_or_tensor, codebook_size: int):
     
     for ids in layers:
         unique_ids, counts = torch.unique(ids, return_counts=True)
-        
+
         coverage = torch.tensor(unique_ids.numel() / codebook_size, device=ids.device)
         coverages.append(coverage)
         
@@ -110,3 +110,62 @@ def calculate_entropy_and_coverage(ids_or_tensor, codebook_size: int):
         entropies.append(entropy)
         
     return torch.stack(coverages), torch.stack(entropies)
+
+
+def calculate_quantizer_metrics(
+    ids: torch.Tensor,
+    codebook_size: int,
+    input_tensor: torch.Tensor = None,
+    first_residual: torch.Tensor = None,
+    final_residual: torch.Tensor = None,
+    codebooks: list = None
+) -> dict:
+    """
+    Calculate harmonized metrics for quantization models (FSQ, ResidualFSQ, RQ-VAE).
+    
+    Args:
+        ids (torch.Tensor): Assignment IDs, shape (batch_size, num_layers) or (batch_size, seq_len)
+        codebook_size (int): Size of the codebook
+        input_tensor (torch.Tensor, optional): Quantizer input, shape (batch_size, ...)
+        first_residual (torch.Tensor, optional): Residual after the first layer
+        final_residual (torch.Tensor, optional): Residual after the final layer
+        codebooks (list of torch.Tensor, optional): List of codebook parameters/tensors
+        
+    Returns:
+        dict: Dictionary containing the calculated metrics
+    """
+    batch_size = ids.shape[0]
+    
+    # unique ID sequences ratio in the batch
+    p_unique_ids = torch.tensor(
+        torch.unique(ids.cpu(), dim=0).shape[0] / batch_size,
+        device=ids.device
+    )
+    
+    # layer coverages and entropies
+    layer_coverages, layer_entropies = calculate_entropy_and_coverage(ids, codebook_size)
+    
+    metrics = {
+        "p_unique_ids": p_unique_ids,
+        "layer_coverages": layer_coverages,
+        "layer_entropies": layer_entropies
+    }
+    
+    # residual metrics (optional)
+    if input_tensor is not None and first_residual is not None and final_residual is not None:
+        # compute norms over the last dimension (latent dimension) and mean over the batch/sequence dims
+        input_norm = input_tensor.norm(dim=-1).mean().clamp(min=1e-8)
+        first_res_norm = first_residual.norm(dim=-1).mean()
+        final_res_norm = final_residual.norm(dim=-1).mean()
+        
+        metrics["first_residual_norm"] = first_res_norm
+        metrics["last_residual_norm"] = final_res_norm
+        metrics["first_residual_rel"] = first_res_norm / input_norm
+        metrics["last_residual_rel"] = final_res_norm / input_norm
+        
+    # codebook centroid metrics (optional)
+    if codebooks is not None and len(codebooks) > 0:
+        metrics["first_centroids_norm"] = codebooks[0].norm(dim=-1).mean()
+        metrics["last_centroids_norm"] = codebooks[-1].norm(dim=-1).mean()
+        
+    return metrics
