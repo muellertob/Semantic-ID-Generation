@@ -8,11 +8,20 @@ This document serves as a context guide for AI agents and developers working on 
 
 **Core Architecture:**
 - **RQ-VAE:** A Variational Autoencoder that uses Residual Quantization (multiple codebooks) to encode items into a sequence of discrete IDs. Supports **STE** and **Gumbel Softmax** quantization, with **L2** and **Cosine** distance metrics.
+- **FSQ:** Finite Scalar Quantization, an alternative to VQ that uses predefined discrete boundary mapping instead of learned codebooks, enabling gradient bypass without auxiliary losses.
 - **RQ-KMeans:** Lightweight alternative: residual K-Means clustering without neural training. No gradient, directly fits on embeddings.
 - **TIGER:** T5-based Seq2Seq model for generative recommendation using SIDs.
 - **SASRec:** Self-Attentive Sequential Recommendation baseline (decoder-only Transformer on raw item IDs).
 
 ---
+
+## Environment Setup
+
+Before running any commands or tests, ensure you are using the correct Conda environment defined in `environment.yml`:
+```bash
+conda activate semantic-id-generation
+```
+Alternatively, prefix your commands with `conda run -n semantic-id-generation `.
 
 ## Developer Commands
 
