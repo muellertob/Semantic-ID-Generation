@@ -2,7 +2,6 @@ import torch
 import argparse
 from omegaconf import OmegaConf
 from data.factory import load_data
-from modules.rqvae import RQ_VAE
 from utils.sid_evaluation import evaluate_semids
 import os
 import logging
@@ -11,24 +10,65 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def load_trained_model(model_path, config, device, input_dim):
-    """Load a trained RQ-VAE model."""
-    model = RQ_VAE(
-        input_dim=input_dim,
-        latent_dim=config.model.latent_dimension,
-        hidden_dims=config.model.hidden_dimensions,
-        codebook_size=config.model.codebook_clusters,
-        n_quantization_layers=config.model.num_codebook_layers,
-        commitment_weight=config.model.commitment_weight,
-    )
+    """Load a trained quantizer model (FSQ or RQ-VAE)."""
+    quantizer_type = getattr(config.model, 'quantizer_type', 'rqvae')
     
-    model.load_state_dict(torch.load(model_path, map_location=device), strict=False)
-    model.to(device)
-    model.eval()
-    
-    # Mark all quantization layers as initialized to prevent k-means reinit
-    for layer in model.quantizer.quantization_layers:
-        layer.kmeans_initted = True
-    
+    if quantizer_type == 'rqvae':
+        from modules.rqvae.model import RQ_VAE
+        model = RQ_VAE(
+            input_dim=input_dim,
+            latent_dim=config.model.latent_dimension,
+            hidden_dims=config.model.hidden_dimensions,
+            codebook_size=config.model.codebook_size,
+            codebook_layers=config.model.codebook_layers,
+            commitment_weight=config.model.commitment_weight,
+        )
+        model.load_state_dict(torch.load(model_path, map_location=device), strict=False)
+        model.to(device)
+        model.eval()
+        
+        # Mark all quantization layers as initialized to prevent k-means reinit
+        for layer in model.quantizer.quantization_layers:
+            layer.kmeans_initted = True
+    elif quantizer_type == 'residual_fsq':
+        from modules.fsq.model import ResidualFSQ_AutoEncoder
+        projection_type = getattr(config.model, 'projection_type', 'mlp_1_hidden')
+        inner_dim = getattr(config.model, 'inner_dim', 256)
+        model = ResidualFSQ_AutoEncoder(
+            input_dim=input_dim,
+            codebook_layers=config.model.codebook_layers,
+            hidden_dims=config.model.hidden_dimensions,
+            latent_dim=config.model.latent_dimension,
+            level_list=config.model.level_list,
+            loss_type=getattr(config.model, 'loss_type', 'mse'),
+            normalize=getattr(config.data, 'normalize_data', True),
+            projection_type=projection_type,
+            inner_dim=inner_dim
+        )
+        model.load_state_dict(torch.load(model_path, map_location=device), strict=False)
+        model.to(device)
+        model.eval()
+    elif quantizer_type == 'fsq':
+        from modules.fsq.model import FSQ_AutoEncoder
+        projection_type = getattr(config.model, 'projection_type', None)
+        inner_dim = getattr(config.model, 'inner_dim', None)
+        model = FSQ_AutoEncoder(
+            input_dim=input_dim,
+            codebook_layers=config.model.codebook_layers,
+            hidden_dims=config.model.hidden_dimensions,
+            latent_dim=config.model.latent_dimension,
+            level_list=config.model.level_list,
+            loss_type=getattr(config.model, 'loss_type', 'mse'),
+            normalize=getattr(config.data, 'normalize_data', True),
+            projection_type=projection_type,
+            inner_dim=inner_dim
+        )
+        model.load_state_dict(torch.load(model_path, map_location=device), strict=False)
+        model.to(device)
+        model.eval()
+    else:
+        raise ValueError(f"Unknown quantizer_type: {quantizer_type}")
+        
     return model
 
 def generate_all_semids(model, data, device, batch_size=64):
@@ -39,10 +79,7 @@ def generate_all_semids(model, data, device, batch_size=64):
     with torch.no_grad():
         for i in range(0, len(data), batch_size):
             batch = data[i:i+batch_size].to(device, dtype=torch.float32)
-            
-            # Get semantic IDs for the batch (uses default temperature 1.0, which is ignored in eval mode)
-            semids = model.get_semantic_ids(batch) # Shape: (batch_size, num_layers)
-            
+            semids = model.get_semantic_ids(batch)
             all_semids.append(semids.cpu())
     
     return torch.cat(all_semids, dim=0)
@@ -98,25 +135,21 @@ def run_generation(config_path, model_path, output_path, batch_size=64, run_eval
     """
     Orchestrate semantic ID generation.
     """
-    # load configuration
     config = OmegaConf.load(config_path)
     if overrides:
         config = OmegaConf.merge(config, OmegaConf.from_dotlist(overrides))
         
     logger.info(f"Resolved Configuration:\n{OmegaConf.to_yaml(config)}")
     
-    # read values from config if present, falling back to function arguments
     generation_config = config.get('generation', {})
     if generation_config:
         batch_size = generation_config.get('batch_size', batch_size)
         
     device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
-    
     logger.info(f"Using device: {device}")
     
     # load all items data
     data = load_data(config, split='all')
-    
     logger.info(f"Loaded {len(data)} all items with dimension {data.shape[1]}")
     
     # load trained model
@@ -129,16 +162,22 @@ def run_generation(config_path, model_path, output_path, batch_size=64, run_eval
         model, data, device, 
         batch_size=batch_size
     )
-    
     logger.info(f"Generated raw semantic IDs shape: {semids.shape}")
 
     # EVALUATE SEMANTIC IDS
     if run_eval:
         evaluate_semids(semids.cpu(), config)
 
-    # RESOLVE COLLISIONS (add 4th token)
+    # RESOLVE COLLISIONS
     # pass codebook_clusters as the limit for the collision token
-    codebook_size = config.model.codebook_clusters
+    quantizer_type = getattr(config.model, 'quantizer_type', 'rqvae')
+    if quantizer_type in ['fsq', 'residual_fsq']:
+        codebook_size = 1
+        for lvl in config.model.level_list:
+            codebook_size *= lvl
+    else:
+        codebook_size = config.model.codebook_size
+
     final_semids = resolve_collisions(semids, max_collisions=codebook_size)
     
     # save results
@@ -148,10 +187,8 @@ def run_generation(config_path, model_path, output_path, batch_size=64, run_eval
         'config': config,
         'num_items': len(data)
     }, output_path)
-    
     logger.info(f"Semantic IDs saved to: {output_path}")
     
-    # print some statistics
     logger.info(f"Semantic ID statistics:")
     logger.info(f"  Shape: {final_semids.shape}")
     logger.info(f"  Min ID per layer: {final_semids.min(dim=0)[0]}")
@@ -159,8 +196,8 @@ def run_generation(config_path, model_path, output_path, batch_size=64, run_eval
     logger.info(f"  Unique IDs per layer: {[len(torch.unique(final_semids[:, i])) for i in range(final_semids.shape[1])]}")
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate semantic IDs using a trained RQ-VAE model")
-    parser.add_argument('--config', type=str, default='config/config_amazon_v2_gumbel.yaml',
+    parser = argparse.ArgumentParser(description="Generate semantic IDs using a trained quantizer model")
+    parser.add_argument('--config', type=str, required=True,
                        help='Path to the configuration file')
     parser.add_argument('--model_path', type=str, required=True,
                        help='Path to the trained model file')
@@ -169,7 +206,7 @@ def main():
     parser.add_argument('--batch_size', type=int, default=64,
                        help='Batch size for processing')
     parser.add_argument('--no_eval', action='store_true',
-                       help='Skip evaluation metrics and plots (faster for quick re-generation)')
+                       help='Skip evaluation metrics and plots')
 
     args, overrides = parser.parse_known_args()
 
@@ -184,4 +221,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

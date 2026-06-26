@@ -179,7 +179,7 @@ class Quantization(nn.Module):
 class ResidualVectorQuantizer(nn.Module):
     def __init__(
         self, 
-        n_quantization_layers: int, 
+        codebook_layers: int, 
         latent_dim: int, 
         codebook_size: int, 
         commitment_weight: float = 0.25, 
@@ -189,7 +189,7 @@ class ResidualVectorQuantizer(nn.Module):
         distance_mode: QuantizeDistance = QuantizeDistance.L2
     ):
         super().__init__()
-        self.n_quantization_layers = n_quantization_layers
+        self.codebook_layers = codebook_layers
         self.codebook_size = codebook_size
         self.quantization_layers = nn.ModuleList([
             Quantization(
@@ -201,7 +201,7 @@ class ResidualVectorQuantizer(nn.Module):
                 forward_mode=forward_mode,
                 distance_mode=distance_mode,
             )
-            for _ in range(n_quantization_layers)
+            for _ in range(codebook_layers)
         ])
         
     def set_quantization_method(self, method: QuantizeForwardMode) -> None:
@@ -236,12 +236,12 @@ class ResidualVectorQuantizer(nn.Module):
 
         final_residual = res
 
-        embs_tensor = torch.stack(embs) # shape: (n_quantization_layers, batch, latent_dim)
+        embs_tensor = torch.stack(embs) # shape: (codebook_layers, batch, latent_dim)
         
         # summing across the hierarchy dimension (dim=0) rebuilds the final continuous representation
         quantized_latent = embs_tensor.sum(dim=0) # shape: (batch, latent_dim)
         
-        sem_ids_tensor = torch.stack(sem_ids, dim=1) # shape: (batch, n_quantization_layers)
+        sem_ids_tensor = torch.stack(sem_ids, dim=1) # shape: (batch, codebook_layers)
         
         with torch.no_grad():
             codebooks = [layer.get_codebook() for layer in self.quantization_layers]

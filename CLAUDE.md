@@ -28,9 +28,9 @@ Alternatively, prefix your commands with `conda run -n semantic-id-generation `.
 ### 1. Training & ID Generation Commands (`main.py`)
 All main workflows are orchestrated via `main.py`. Any config parameter can be overridden at the end of the command using dot-list format (e.g., `model.latent_dimension=128`).
 
-* **Train RQ-VAE (Item Encoder):**
+* **Train Quantizer (FSQ, ResidualFSQ, RQ-VAE):**
   ```bash
-  python main.py train-rqvae --config config/<config_file>.yaml [override.key=value ...]
+  python main.py train-quantizer --config config/<config_file>.yaml [override.key=value ...]
   ```
 * **Train RQ-KMeans (Alternative SID method):**
   ```bash
@@ -94,7 +94,7 @@ Tests are managed using `pytest`. Configuration options are defined in `pyprojec
 
 ## Directory Structure
 
-- **Root Scripts:** `main.py`, `train_rq_vae.py`, `train_rqkmeans.py`, `train_seq2seq.py`, `test_seq2seq.py`, `train_sasrec.py`, `test_sasrec.py`, `generate_semids.py`, `test_naive_baselines.py`, `hyperparameter.py`.
+- **Root Scripts:** `main.py`, `train_quantizer.py`, `train_rqkmeans.py`, `train_seq2seq.py`, `test_seq2seq.py`, `train_sasrec.py`, `test_sasrec.py`, `generate_semids.py`, `test_naive_baselines.py`, `hyperparameter.py`.
 - **`modules/`**: Package-based model implementations.
   - **`rqvae/`**: Core RQ-VAE SID generation.
     - `model.py`: Main `RQ_VAE` class.
@@ -104,6 +104,9 @@ Tests are managed using `pytest`. Configuration options are defined in `pyprojec
   - **`rqkmeans/`**: RQ-KMeans (non-neural SID baseline).
     - `model.py`: `RQKMeans` class.
     - `kmeans.py`: `BatchKMeans` implementation.
+  - **`fsq/`**: Finite Scalar Quantization integration.
+    - `model.py`: `FSQ_AutoEncoder` chunking embeddings for flat tokenization.
+    - `quantization.py`: `FSQ` and `ResidualFSQ` discrete projection logic.
   - **`recommender/`**: Generative Recommendation logic.
     - `seq2seq.py`: `TigerSeq2Seq` (T5-based TIGER).
   - **`sasrec/`**: Sequential recommendation baseline.

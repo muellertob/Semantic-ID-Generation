@@ -12,7 +12,7 @@ from utils.sid_evaluation import evaluate_semids
 
 @pytest.fixture
 def config():
-    return OmegaConf.create({"model": {"codebook_clusters": 32}})
+    return OmegaConf.create({"model": {"codebook_size": 32}})
 
 
 @pytest.fixture
@@ -41,5 +41,5 @@ def test_collision_keys_present(semids, config):
 def test_large_dataset_does_not_raise():
     torch.manual_seed(1)
     sids = torch.randint(0, 128, (12101, 3))
-    config = OmegaConf.create({"model": {"codebook_clusters": 128}})
+    config = OmegaConf.create({"model": {"codebook_size": 128}})
     evaluate_semids(sids, config)

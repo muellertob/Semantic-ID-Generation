@@ -63,7 +63,7 @@ def seq2seq_config(tmp_path):
     """Minimal seq2seq config dict and its path inside tmp_path."""
     config = {
         "data": {"dataset": "test", "category": "test_cat"},
-        "model": {"num_codebook_layers": 2, "codebook_clusters": 10},
+        "model": {"quantizer_type": "rqvae", "codebook_layers": 2, "codebook_size": 10},
         "seq2seq": {
             "batch_size": 2, "max_history_len": 5, "user_tokens": 10,
             "d_model": 16, "d_kv": 8, "d_ff": 32, "num_layers": 1, "num_heads": 2,

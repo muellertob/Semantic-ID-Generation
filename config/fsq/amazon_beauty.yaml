@@ -1,0 +1,33 @@
+# data loader configuration
+data:
+  dataset: "amazon"
+  batch_size: 256
+  normalize_data: True
+  category: "beauty"
+  split: "all"
+
+# model configuration (FSQ)
+model:
+  quantizer_type: "fsq"
+  input_dimension: 768
+  hidden_dimensions: [512, 256, 128]
+  latent_dimension: 30            # FSQ bottleneck dim (divisible by num_layers=3)
+  codebook_layers: 3              # Equivalent to number of layers/tokens
+  level_list: [8, 6, 6]           # Bound dimensions per step (8*6*6 = 288 combinations)
+  loss_type: l1
+
+# training configuration (FSQ)
+train:
+  seed: 10
+  optimizer: "adam"
+  learning_rate: 1e-4             
+  weight_decay: 0
+  num_epochs: 2000
+  use_lr_scheduler: False
+
+# additional configuration
+general:
+  use_wandb: True
+  wandb_project_quantizer: "mt-amazon-quantizer"
+  wandb_entity: "tobias-mueller99-johannes-kepler-universit-t-linz"
+  save_model: True

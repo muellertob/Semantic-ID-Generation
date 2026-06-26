@@ -3,7 +3,7 @@ import wandb
 import torch.optim as optim
 from torch.optim import lr_scheduler
 import math
-from train_rq_vae import train
+from train_quantizer import train
 from omegaconf import OmegaConf
 from data.loader import load_movie_lens, load_amazon
 from modules.rqvae import RQ_VAE
@@ -75,8 +75,8 @@ def create_hyperparameter_grid():
             [768, 384, 192]
         ],
         'latent_dimension': [256],
-        'codebook_clusters': [16, 32, 49],
-        'num_codebook_layers': [3],
+        'codebook_size': [16, 32, 49],
+        'num_layers': [3],
         'commitment_weight': [0.1, 0.25, 0.3]
     }
     return param_grid
@@ -95,8 +95,8 @@ def update_config_with_hyperparams(base_config, hyperparams):
     # Update model parameters
     config.model.hidden_dimensions = hyperparams['hidden_dimensions']
     config.model.latent_dimension = hyperparams['latent_dimension']
-    config.model.codebook_clusters = hyperparams['codebook_clusters']
-    config.model.num_codebook_layers = hyperparams['num_codebook_layers']
+    config.model.codebook_size = hyperparams['codebook_size']
+    config.model.num_layers = hyperparams['num_layers']
     config.model.commitment_weight = hyperparams['commitment_weight']
     
     return config
@@ -107,7 +107,7 @@ def evaluate_model_performance(train_results):
         return {
             'final_loss': float('inf'),
             'final_reconstruction_loss': float('inf'),
-            'final_rqvae_loss': float('inf'),
+            'final_quantization_loss': float('inf'),
             'final_prob_unique_ids': 0.0,
             'avg_loss': float('inf'),
             'convergence_epoch': len(train_results)
@@ -123,7 +123,7 @@ def evaluate_model_performance(train_results):
     return {
         'final_loss': final_result['Loss'],
         'final_reconstruction_loss': final_result['Reconstruction Loss'],
-        'final_rqvae_loss': final_result['RQ-VAE Loss'],
+        'final_quantization_loss': final_result.get('Quantization Loss', 0.0),
         'final_prob_unique_ids': final_result['Prob Unique IDs'],
         'avg_loss': avg_loss,
         'convergence_epoch': len(train_results)
@@ -149,10 +149,10 @@ def train_single_config(base_config, hyperparams, data, device, trial_id):
             input_dim=data.shape[1],
             latent_dim=config.model.latent_dimension,
             hidden_dims=config.model.hidden_dimensions,
-            codebook_size=config.model.codebook_clusters,
+            codebook_size=config.model.codebook_size,
             codebook_kmeans_init=True,
             codebook_sim_vq=True,
-            n_quantization_layers=config.model.num_codebook_layers,
+            num_layers=config.model.num_layers,
             commitment_weight=config.model.commitment_weight,
         )
         model.to(device)
@@ -185,7 +185,7 @@ def train_single_config(base_config, hyperparams, data, device, trial_id):
             wandb.log({
                 "hp_final_loss": performance['final_loss'],
                 "hp_final_reconstruction_loss": performance['final_reconstruction_loss'],
-                "hp_final_rqvae_loss": performance['final_rqvae_loss'],
+                "hp_final_quantization_loss": performance['final_quantization_loss'],
                 "hp_final_prob_unique_ids": performance['final_prob_unique_ids'],
                 "hp_avg_loss": performance['avg_loss'],
                 "hp_convergence_epoch": performance['convergence_epoch']
@@ -198,7 +198,7 @@ def train_single_config(base_config, hyperparams, data, device, trial_id):
         return {
             'final_loss': float('inf'),
             'final_reconstruction_loss': float('inf'),
-            'final_rqvae_loss': float('inf'),
+            'final_quantization_loss': float('inf'),
             'final_prob_unique_ids': 0.0,
             'avg_loss': float('inf'),
             'convergence_epoch': 0,

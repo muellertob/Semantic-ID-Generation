@@ -14,31 +14,54 @@ def generate_model_id(config: Dict) -> str:
         bs = s.get('batch_size', 256)
         return f"recommender-{dataset}-dm{d_model}-l{layers}-h{heads}-lr{lr}-bs{bs}"
 
-    # check if this is an RQ-VAE config
+    # check if this is a quantizer config (FSQ / RQ-VAE)
     elif hasattr(config, 'model') and hasattr(config, 'train'):
         m = config.model
         t = config.train
         d = config.data
 
+        quantizer_type = m.get('quantizer_type')
+        if quantizer_type == 'residual_fsq':
+            prefix = 'rfsq'
+        elif quantizer_type == 'fsq':
+            prefix = 'fsq'
+        elif quantizer_type == 'rqvae':
+            prefix = 'rqvae'
+        else:
+            prefix = 'quantizer'
+
         dimension = d.get('embedding_dimension', '')
+        dim_str = f"-{dimension}" if dimension else ""
         batch_size = d.get('batch_size', '')
         normalize_data = d.get('normalize_data', False)
         hidden_dimension = m.get('hidden_dimensions', [])
         latent_dimension = m.get('latent_dimension', '')
-        num_codebook_layers = m.get('num_codebook_layers', '')
-        codebook_clusters = m.get('codebook_clusters', '')
-        commitment_weight = m.get('commitment_weight', '')
-        learning_rate = t.get('learning_rate', '')
-        weight_decay = t.get('weight_decay', '')
-        num_epochs = t.get('num_epochs', '')
-
-        # create the model ID string
-        model_id = (
-            f"rqvae-{dataset}-{dimension}-bs{batch_size}-norm{str(normalize_data)[0]}-"
-            f"hd{'_'.join(map(str, hidden_dimension))}-ld{latent_dimension}-"
-            f"cb{num_codebook_layers}x{codebook_clusters}-cw{commitment_weight}-"
-            f"lr{learning_rate}-wd{weight_decay}-ep{num_epochs}"
-        )
+        codebook_layers = m.get('codebook_layers', '')
+ 
+        # FSQ/ResidualFSQ specific model ID
+        if quantizer_type in ['fsq', 'residual_fsq']:
+            level_list = m.get('level_list', [])
+            levels_str = '_'.join(map(str, level_list))
+            proj_type = m.get('projection_type', 'none')
+            inner_dim = m.get('inner_dim', '')
+            
+            model_id = (
+                f"{prefix}-{dataset}{dim_str}-bs{batch_size}-norm{str(normalize_data)[0]}-"
+                f"hd{'_'.join(map(str, hidden_dimension))}-ld{latent_dimension}-"
+                f"l{codebook_layers}-levels{levels_str}-proj_{proj_type}_{inner_dim}-"
+                f"lr{t.get('learning_rate', '')}-wd{t.get('weight_decay', '')}-ep{t.get('num_epochs', '')}"
+            )
+        # RQ-VAE specific model ID
+        else:
+            codebook_size = m.get('codebook_size', '')
+            commitment_weight = m.get('commitment_weight', '')
+            
+            model_id = (
+                f"{prefix}-{dataset}{dim_str}-bs{batch_size}-norm{str(normalize_data)[0]}-"
+                f"hd{'_'.join(map(str, hidden_dimension))}-ld{latent_dimension}-"
+                f"cb{codebook_layers}x{codebook_size}-cw{commitment_weight}-"
+                f"lr{t.get('learning_rate', '')}-wd{t.get('weight_decay', '')}-ep{t.get('num_epochs', '')}"
+            )
         return model_id
 
     return f"model-{dataset}-unknown"

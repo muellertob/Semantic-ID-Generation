@@ -102,8 +102,8 @@ def test_fsq_quantized_values_range():
 
 
 def test_fsq_latent_space_chunking():
-    # Test FSQ with seq_len = 4 and level_list of size 3 (latent_dim = 12)
-    fsq = FSQ(dim=12, seq_len=4, level_list=[8, 6, 5])
+    # Test FSQ with codebook_layers = 4 and level_list of size 3 (latent_dim = 12)
+    fsq = FSQ(dim=12, codebook_layers=4, level_list=[8, 6, 5])
     assert fsq.codebook_size == 240
     
     z = torch.randn(5, 12)
@@ -120,7 +120,7 @@ def test_fsq_projection_types():
     for proj_type in projection_types:
         fsq = FSQ(
             dim=12,
-            seq_len=4,
+            codebook_layers=4,
             level_list=[8, 6, 5],
             projection_type=proj_type,
             inner_dim=16
@@ -142,15 +142,15 @@ def test_fsq_projection_types():
 # ==============================================================================
 
 def test_residual_fsq_quantization():
-    n_quantizers = 4
+    codebook_layers = 4
     quantizer = ResidualFSQ(
-        dim=256, level_list=[8, 6, 5], n_quantizers=n_quantizers, inner_dim=128, projection_type="mlp_1_hidden"
+        dim=256, level_list=[8, 6, 5], codebook_layers=codebook_layers, inner_dim=128, projection_type="mlp_1_hidden"
     )
     x = torch.randn(16, 256, requires_grad=True)
     out = quantizer(x)
     
     assert out.embeddings.shape == (16, 256)
-    assert out.ids.shape == (16, n_quantizers)
+    assert out.ids.shape == (16, codebook_layers)
     
     # Placeholder loss to check gradient flow
     loss = out.embeddings.sum()
@@ -159,9 +159,9 @@ def test_residual_fsq_quantization():
 
 
 def test_residual_fsq_metrics_and_zero_input():
-    n_quantizers = 3
+    codebook_layers = 3
     quantizer = ResidualFSQ(
-        dim=64, level_list=[8, 6, 5], n_quantizers=n_quantizers, inner_dim=32, projection_type="mlp_1_hidden"
+        dim=64, level_list=[8, 6, 5], codebook_layers=codebook_layers, inner_dim=32, projection_type="mlp_1_hidden"
     )
     
     # Test with standard inputs

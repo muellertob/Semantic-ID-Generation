@@ -61,9 +61,10 @@ def minimal_config():
             "normalize_data": True,
         },
         "model": {
+            "quantizer_type": "rqvae",
             "input_dimension": 32,
-            "num_codebook_layers": 3,
-            "codebook_clusters": 16,
+            "codebook_layers": 3,
+            "codebook_size": 16,
             "quantization_method": "ste",
             "distance_method": "cosine",
         },

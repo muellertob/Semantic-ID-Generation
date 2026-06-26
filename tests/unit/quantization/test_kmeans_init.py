@@ -12,7 +12,7 @@ def dummy_model():
         hidden_dims=[32],
         codebook_size=8,
         codebook_kmeans_init=True,
-        n_quantization_layers=3,
+        codebook_layers=3,
         quantization_method=QuantizeForwardMode.STE,
         distance_mode=QuantizeDistance.L2
     )
@@ -79,5 +79,5 @@ def test_kmeans_init_is_called_when_uninitialized(mock_kmeans_init, dummy_model,
     out = dummy_model(dummy_data)
     
     # Assert: _kmeans_init should have been called once for each layer
-    assert mock_kmeans_init.call_count == dummy_model.quantizer.n_quantization_layers
+    assert mock_kmeans_init.call_count == dummy_model.quantizer.codebook_layers
     assert out.loss is not None

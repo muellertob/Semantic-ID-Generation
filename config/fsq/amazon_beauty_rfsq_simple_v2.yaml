@@ -1,0 +1,35 @@
+# data loader configuration
+data:
+  dataset: "amazon"
+  batch_size: 256
+  normalize_data: True
+  category: "beauty"
+  split: "all"
+
+# model configuration (Residual FSQ - Simple Bottleneck)
+model:
+  quantizer_type: "residual_fsq"
+  input_dimension: 768
+  hidden_dimensions: [512, 256, 128]
+  latent_dimension: 32            # Single global latent bottleneck
+  codebook_layers: 3              # Number of residual quantizer stages
+  level_list: [8, 6, 6]           # Bound dimensions per step
+  loss_type: l1
+  projection_type: "mlp_1_hidden"
+  inner_dim: 16
+
+# training configuration (FSQ)
+train:
+  seed: 10
+  optimizer: "adam"
+  learning_rate: 1e-4             
+  weight_decay: 0
+  num_epochs: 2000
+  use_lr_scheduler: False
+
+# additional configuration
+general:
+  use_wandb: True
+  wandb_project_quantizer: "mt-amazon-quantizer"
+  wandb_entity: "tobias-mueller99-johannes-kepler-universit-t-linz"
+  save_model: True

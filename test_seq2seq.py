@@ -69,8 +69,8 @@ def run_testing(config_path, semantic_ids_path, model_path, overrides=None):
     
     # initialize model
     model = TigerSeq2Seq(
-        codebook_layers=config.seq2seq.get('num_codebook_layers', 3),
-        codebook_size=config.seq2seq.get('codebook_clusters', 256),
+        codebook_layers=config.seq2seq.get('codebook_layers', 3),
+        codebook_size=config.seq2seq.get('codebook_size', 256),
         user_tokens=config.seq2seq.get('user_tokens', 2000),
         d_model=config.seq2seq.get('d_model', 128),
         d_kv=config.seq2seq.get('d_kv', 64),

@@ -32,7 +32,7 @@ general:
   output_path: "outputs/rqkmeans/rqkmeans_semids.pt"
   plot_dir: "outputs/rqkmeans_eval_plots"
   use_wandb: True
-  wandb_project_rqvae: "mt-amazon-rqvae"
+  wandb_project_quantizer: "mt-amazon-quantizer"
   wandb_project_tiger: "mt-amazon-tiger"
   wandb_entity: "tobias-mueller99-johannes-kepler-universit-t-linz"
 

@@ -1,15 +1,15 @@
 """
 Main CLI entry point for the Semantic-ID Generation project.
 Supports multiple commands:
-- train-rqvae: Train the RQ-VAE model
+- train-quantizer: Train the quantizer model (FSQ, ResidualFSQ, RQ-VAE)
 - train-seq2seq: Train the Seq2Seq (Transformer) model
 - test-seq2seq: Test a trained Seq2Seq model on the test set
-- generate-ids: Generate Semantic IDs using a trained RQ-VAE
+- generate-ids: Generate Semantic IDs using a trained model
 """
 
 import argparse
 import logging
-from train_rq_vae import run_training as run_rqvae
+from train_quantizer import run_training as run_quantizer
 from train_seq2seq import run_training as run_seq2seq
 from test_seq2seq import run_testing as test_seq2seq
 from generate_semids import run_generation
@@ -22,9 +22,9 @@ def main():
     parser = argparse.ArgumentParser(description="Semantic ID Generation CLI")
     subparsers = parser.add_subparsers(dest='command', help='Available commands')
 
-    # RQ-VAE Training
-    rqvae_parser = subparsers.add_parser('train-rqvae', help='Train RQ-VAE model')
-    rqvae_parser.add_argument('--config', type=str, required=True, help='Path to configuration file')
+    # Quantizer Training
+    quantizer_parser = subparsers.add_parser('train-quantizer', help='Train quantizer model (FSQ, ResidualFSQ, RQ-VAE)')
+    quantizer_parser.add_argument('--config', type=str, required=True, help='Path to configuration file')
 
     # Seq2Seq Training (TIGER Transformer)
     seq2seq_parser = subparsers.add_parser('train-seq2seq', help='Train Seq2Seq (Transformer) model')
@@ -46,7 +46,7 @@ def main():
     # ID Generation
     gen_parser = subparsers.add_parser('generate-ids', help='Generate Semantic IDs')
     gen_parser.add_argument('--config', type=str, required=True, help='Path to configuration file')
-    gen_parser.add_argument('--model_path', type=str, required=True, help='Path to trained RQ-VAE model')
+    gen_parser.add_argument('--model_path', type=str, required=True, help='Path to trained quantizer model')
     gen_parser.add_argument('--output_path', type=str, default='outputs/semids.pt', help='Path to save output')
     gen_parser.add_argument('--batch_size', type=int, default=64, help='Batch size')
 
@@ -64,8 +64,8 @@ def main():
  
     if args.command == 'train-rqkmeans':
         run_rqkmeans(args.config, overrides=overrides)
-    elif args.command == 'train-rqvae':
-        run_rqvae(args.config, overrides=overrides)
+    elif args.command == 'train-quantizer':
+        run_quantizer(args.config, overrides=overrides)
     elif args.command == 'train-seq2seq':
         run_seq2seq(args.config, args.semids, args.resume, args.warmup_steps, overrides)
     elif args.command == 'test-seq2seq':

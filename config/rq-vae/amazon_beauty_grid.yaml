@@ -8,11 +8,12 @@ data:
 
 # model configuration (RQ-VAE)
 model:
+  quantizer_type: "rqvae"
   input_dimension: 768
   hidden_dimensions: [768, 256, 128]
   latent_dimension: 64            # GRID used 64; TIGER used 32
-  num_codebook_layers: 3
-  codebook_clusters: 128
+  codebook_layers: 3
+  codebook_size: 128
   commitment_weight: 0.25         # GRID used 0.25
   quantization_method: "ste"
   distance_method: "l2"
@@ -29,6 +30,6 @@ train:
 # additional configuration
 general:
   use_wandb: True
-  wandb_project_rqvae: "mt-amazon-rqvae"
+  wandb_project_quantizer: "mt-amazon-quantizer"
   wandb_entity: "tobias-mueller99-johannes-kepler-universit-t-linz"
   save_model: True

@@ -49,8 +49,8 @@ def run_training(config_path: str | None, _config_override=None, overrides=None)
 
     # fit model and generate raw semantic IDs
     model = RQKMeans(
-        n_layers=config.model.n_layers,
-        n_clusters=config.model.codebook_clusters,
+        n_layers=config.model.codebook_layers,
+        n_clusters=config.model.codebook_size,
         n_iters=config.model.n_iters,
         normalize_residuals=config.model.normalize_residuals,
         seed=config.general.seed,
@@ -65,7 +65,7 @@ def run_training(config_path: str | None, _config_override=None, overrides=None)
     )
 
     # collision resolution
-    codebook_size = config.model.codebook_clusters
+    codebook_size = config.model.codebook_size
     sem_ids = resolve_collisions(sem_ids_raw, max_collisions=codebook_size)
 
     # save output

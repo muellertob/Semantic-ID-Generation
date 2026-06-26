@@ -72,15 +72,15 @@ class FSQ(FSQCore):
     Finite Scalar Quantization (FSQ) module with projection layer and seq chunking.
     It takes an input of dimension `len(level_list)` and maps it to a codebook.
     """
-    def __init__(self, dim: int = None, seq_len: int = 1, level_list: List[int] = [8, 6, 5], projection_type: str = None, inner_dim: int = None):
+    def __init__(self, dim: int = None, codebook_layers: int = 1, level_list: List[int] = [8, 6, 5], projection_type: str = None, inner_dim: int = None):
         super().__init__(level_list)
         
         self.codebook_dim = len(self.level_list)
         self.codebook_size = 1
         for level in level_list:
             self.codebook_size *= level
-        self.seq_len = seq_len
-        self.chunk_dim = dim // seq_len if dim is not None else None
+        self.codebook_layers = codebook_layers
+        self.chunk_dim = dim // codebook_layers if dim is not None else None
             
         if projection_type is None:
             projection_type = "linear" if self.chunk_dim is not None and self.chunk_dim != self.codebook_dim else "identity"
@@ -99,7 +99,7 @@ class FSQ(FSQCore):
         batch_size = z.shape[0]
         
         # split latent dimension into sequence chunks
-        z_chunked = z.view(batch_size, self.seq_len, -1)
+        z_chunked = z.view(batch_size, self.codebook_layers, -1)
         
         z_proj = self.project_in(z_chunked)
         codes = self.quantize(z_proj)
@@ -162,10 +162,10 @@ class FSQLayer(nn.Module):
         return out, indices
 
 class ResidualFSQ(nn.Module):
-    def __init__(self, dim: int, level_list: List[int] = [8, 6, 5], n_quantizers: int = 3, inner_dim: int = 128, projection_type: str = "mlp_1_hidden"):
+    def __init__(self, dim: int, level_list: List[int] = [8, 6, 5], codebook_layers: int = 3, inner_dim: int = 128, projection_type: str = "mlp_1_hidden"):
         super().__init__()
         self.level_list = level_list
-        self.n_quantizers = n_quantizers
+        self.codebook_layers = codebook_layers
         
         self.codebook_size = 1
         for level in level_list:
@@ -173,7 +173,7 @@ class ResidualFSQ(nn.Module):
             
         self.layers = nn.ModuleList([
             FSQLayer(dim=dim, level_list=level_list, inner_dim=inner_dim, projection_type=projection_type) 
-            for _ in range(n_quantizers)
+            for _ in range(codebook_layers)
         ])
         
     def forward(self, x: torch.Tensor, **kwargs) -> QuantizeOutput:

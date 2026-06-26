@@ -10,7 +10,7 @@ from schemas.vae import VaeOutput
 def test_fsq_autoencoder_forward_and_backward():
     model = FSQ_AutoEncoder(
         input_dim=768,
-        seq_len=3,
+        codebook_layers=3,
         hidden_dims=[128, 64],
         latent_dim=30,
         level_list=[8, 6, 5],
@@ -46,7 +46,7 @@ def test_fsq_autoencoder_forward_and_backward():
 def test_fsq_autoencoder_get_semantic_ids():
     model = FSQ_AutoEncoder(
         input_dim=768,
-        seq_len=4,
+        codebook_layers=4,
         hidden_dims=[128, 64],
         latent_dim=32,
         level_list=[8, 6, 5]
@@ -66,7 +66,7 @@ def test_fsq_autoencoder_get_semantic_ids():
 def test_residual_fsq_autoencoder_forward_and_backward():
     model = ResidualFSQ_AutoEncoder(
         input_dim=768,
-        seq_len=3,
+        codebook_layers=3,
         hidden_dims=[128, 64],
         latent_dim=30,
         level_list=[8, 6, 5],
@@ -102,7 +102,7 @@ def test_residual_fsq_autoencoder_forward_and_backward():
 def test_residual_fsq_autoencoder_get_semantic_ids():
     model = ResidualFSQ_AutoEncoder(
         input_dim=768,
-        seq_len=4,
+        codebook_layers=4,
         hidden_dims=[128, 64],
         latent_dim=32,
         level_list=[8, 6, 5]

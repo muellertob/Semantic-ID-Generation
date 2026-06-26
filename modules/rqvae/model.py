@@ -10,7 +10,7 @@ def RQ_VAE(
         codebook_size, 
         codebook_kmeans_init=True, 
         codebook_sim_vq=False, 
-        n_quantization_layers=3, 
+        codebook_layers=3, 
         commitment_weight=0.25, 
         quantization_method=QuantizeForwardMode.STE, 
         distance_mode=QuantizeDistance.L2
@@ -26,7 +26,7 @@ def RQ_VAE(
             latent_dim=latent_dim
         )
         quantizer = ResidualVectorQuantizer(
-            n_quantization_layers=n_quantization_layers,
+            codebook_layers=codebook_layers,
             latent_dim=latent_dim,
             codebook_size=codebook_size,
             commitment_weight=commitment_weight,

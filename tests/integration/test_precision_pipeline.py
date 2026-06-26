@@ -22,7 +22,7 @@ def test_full_pipeline_precision():
         input_dim=768,
         hidden_dims=[768, 256, 128],
         latent_dim=64,
-        n_quantization_layers=3,
+        codebook_layers=3,
         codebook_size=128,
         commitment_weight=0.25,
         quantization_method=QuantizeForwardMode.STE,

@@ -116,10 +116,18 @@ def _utilisation_table(util_per_layer: list, cb_size: int) -> list:
     return table
 
 
+def _get_codebook_size(config, default="?"):
+    model_cfg = getattr(config, "model", None)
+    if hasattr(model_cfg, "level_list"):
+        import math
+        return math.prod(model_cfg.level_list)
+    return getattr(model_cfg, "codebook_size", default)
+
+
 def print_evaluation_report(all_stats: dict, config) -> None:
     """Print a structured text report to stdout."""
     n_layers = len(all_stats["utilisation"]["per_layer"])
-    cb_size = getattr(getattr(config, "model", None), "codebook_clusters", "?")
+    cb_size = _get_codebook_size(config, "?")
 
     lines = [
         "",
@@ -163,7 +171,7 @@ def evaluate_semids(raw_semids: torch.Tensor, config) -> dict:
     Returns:
         dict with keys: utilisation, collision.
     """
-    cb_size = getattr(getattr(config, "model", None), "codebook_clusters", 128)
+    cb_size = _get_codebook_size(config, 128)
 
     all_stats = {
         "utilisation": compute_utilisation(raw_semids, cb_size),
