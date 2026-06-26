@@ -8,7 +8,7 @@ data:
 
 # model configuration (Residual FSQ - Complex Bottleneck)
 model:
-  quantizer_type: "residual_fsq"
+  quantizer_type: "rfsq"
   input_dimension: 768
   hidden_dimensions: [512, 256, 128]
   latent_dimension: 32            # Single global latent bottleneck

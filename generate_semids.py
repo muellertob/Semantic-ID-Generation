@@ -30,7 +30,7 @@ def load_trained_model(model_path, config, device, input_dim):
         # Mark all quantization layers as initialized to prevent k-means reinit
         for layer in model.quantizer.quantization_layers:
             layer.kmeans_initted = True
-    elif quantizer_type == 'residual_fsq':
+    elif quantizer_type == 'rfsq':
         from modules.fsq.model import ResidualFSQ_AutoEncoder
         projection_type = getattr(config.model, 'projection_type', 'mlp_1_hidden')
         inner_dim = getattr(config.model, 'inner_dim', 256)
@@ -171,7 +171,7 @@ def run_generation(config_path, model_path, output_path, batch_size=64, run_eval
     # RESOLVE COLLISIONS
     # pass codebook_clusters as the limit for the collision token
     quantizer_type = getattr(config.model, 'quantizer_type', 'rqvae')
-    if quantizer_type in ['fsq', 'residual_fsq']:
+    if quantizer_type in ['fsq', 'rfsq']:
         codebook_size = 1
         for lvl in config.model.level_list:
             codebook_size *= lvl

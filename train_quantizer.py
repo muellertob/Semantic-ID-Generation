@@ -74,7 +74,7 @@ def create_model(config, input_dim):
         )
         logger.info(f"Created RQ-VAE model with {quantization_method_str} quantization, codebook_size={config.model.codebook_size}, layers={codebook_layers}")
     
-    elif quantizer_type == "residual_fsq":
+    elif quantizer_type == "rfsq":
         projection_type = getattr(config.model, 'projection_type', 'mlp_1_hidden')
         inner_dim = getattr(config.model, 'inner_dim', 256)
         level_list = config.model.level_list
@@ -272,9 +272,14 @@ def run_training(config_path, overrides=None):
     device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
     model_id = generate_model_id(config)
     quantizer_type = config.model.quantizer_type
+    
+    prefix = quantizer_type
 
     if config.general.use_wandb:
         wandb_init(config, project=config.general.wandb_project_quantizer)
+        if wandb.run is not None:
+            if not wandb.run.name.startswith(f"{prefix}-"):
+                wandb.run.name = f"{prefix}-{wandb.run.name}"
         wandb.define_metric("Epoch")
         wandb.define_metric("*", step_metric="Epoch")
         # use WandB run name if provided, otherwise fallback to generated model_id

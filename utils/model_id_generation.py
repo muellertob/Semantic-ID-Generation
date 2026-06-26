@@ -21,14 +21,7 @@ def generate_model_id(config: Dict) -> str:
         d = config.data
 
         quantizer_type = m.get('quantizer_type')
-        if quantizer_type == 'residual_fsq':
-            prefix = 'rfsq'
-        elif quantizer_type == 'fsq':
-            prefix = 'fsq'
-        elif quantizer_type == 'rqvae':
-            prefix = 'rqvae'
-        else:
-            prefix = 'quantizer'
+        prefix = quantizer_type if quantizer_type in ['fsq', 'rfsq', 'rqvae'] else 'quantizer'
 
         dimension = d.get('embedding_dimension', '')
         dim_str = f"-{dimension}" if dimension else ""
@@ -39,7 +32,7 @@ def generate_model_id(config: Dict) -> str:
         codebook_layers = m.get('codebook_layers', '')
  
         # FSQ/ResidualFSQ specific model ID
-        if quantizer_type in ['fsq', 'residual_fsq']:
+        if quantizer_type in ['fsq', 'rfsq']:
             level_list = m.get('level_list', [])
             levels_str = '_'.join(map(str, level_list))
             proj_type = m.get('projection_type', 'none')
