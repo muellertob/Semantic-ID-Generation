@@ -1,0 +1,19 @@
+# data loader configuration
+data:
+  dataset: "amazon"
+  category: "beauty"
+  normalize_data: True # important for consistent codebook perplexity
+
+# model configuration (RQ-KMeans)
+model:
+  codebook_layers: 3
+  codebook_size: 256
+  n_iters: 100
+  normalize_residuals: True
+
+# additional configuration
+general:
+  seed: 10
+  save_model: True
+  model_path: "models/rqkmeans/rqkmeans.pt"
+  output_path: "outputs/rqkmeans/rqkmeans_semids.pt"
