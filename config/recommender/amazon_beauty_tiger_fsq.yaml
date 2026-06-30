@@ -14,10 +14,10 @@ seq2seq:
   activation_fn: "relu"
   
   # optimization
-  learning_rate: 5e-4
-  weight_decay: 1e-6
-  use_lr_scheduler: True # differs slightly from TIGER; it uses fixed lr during warmup and more steps (10k)
-  warmup_steps: 1000
+  learning_rate: 0.01
+  weight_decay: 0.0001
+  use_lr_scheduler: True # TIGER paper: inverse sqrt decay after 10k steps of fixed 0.01 lr
+  warmup_steps: 10000
   batch_size: 256
   
   # data
@@ -29,6 +29,7 @@ seq2seq:
   
   # training loop
   num_epochs: 500
+  eval_epoch_interval: 5
   early_stopping: True
   early_stopping_patience: 7
   resume_optimizer: True

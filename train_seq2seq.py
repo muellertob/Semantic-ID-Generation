@@ -228,7 +228,7 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
         wandb.watch(model, log="all")
 
     # define optimizer and scheduler
-    optimizer = optim.AdamW(
+    optimizer = optim.Adam(
         model.parameters(), 
         lr=config.seq2seq.get('learning_rate', 1e-3),
         weight_decay=config.seq2seq.get('weight_decay', 0.0001)
@@ -268,7 +268,7 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
     steps_per_epoch = len(train_loader)
     total_steps = num_epochs * steps_per_epoch
 
-    # linear warmup with cosine decay
+    # fixed lr / inverse square root decay scheduler
     use_lr_scheduler = config.seq2seq.get('use_lr_scheduler', True)
     
     if use_lr_scheduler:
@@ -277,18 +277,13 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
         else:
              warmup_steps = config.seq2seq.get('warmup_steps', 10000)
              
-        warmup_scheduler = optim.lr_scheduler.LinearLR(
-            optimizer, start_factor=1e-8, end_factor=1.0, total_iters=warmup_steps
-        )
-        
-        decay_steps = total_steps - warmup_steps
-        cosine_scheduler = optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=max(1, decay_steps), eta_min=1e-5
-        )
-        
-        scheduler = optim.lr_scheduler.SequentialLR(
-            optimizer, schedulers=[warmup_scheduler, cosine_scheduler], milestones=[warmup_steps]
-        )
+        def inverse_sqrt_lambda(step):
+            step = max(1, step)
+            if step < warmup_steps:
+                return 1.0
+            return (warmup_steps / step) ** 0.5
+            
+        scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=inverse_sqrt_lambda)
         
         # fast-forward scheduler if resuming
         if global_step > 0:
@@ -356,8 +351,9 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
         
         # CHECKPOINTING & EARLY STOPPING based on retrieval metrics
         stop_training = False
-        # compute retrieval metrics every 5 epochs and on the last epoch
-        if not stop_training and ((epoch + 1) % 5 == 0 or (epoch + 1) == num_epochs):
+        # compute retrieval metrics every eval_epoch_interval epochs and on the last epoch
+        eval_epoch_interval = config.seq2seq.get('eval_epoch_interval', 5)
+        if not stop_training and ((epoch + 1) % eval_epoch_interval == 0 or (epoch + 1) == num_epochs):
             logger.info("Computing retrieval metrics (Beam Search)...")
             avg_recall, avg_ndcg, avg_hierarchical = compute_metrics(model, eval_loader_metrics, device)
             

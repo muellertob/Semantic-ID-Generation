@@ -210,23 +210,23 @@ class TestWarmupOverride:
         checkpoint_path = _run_and_save_checkpoint(tmp_path, config_path, semids_path)
         assert os.path.exists(checkpoint_path), "Precondition: phase-1 checkpoint must exist"
 
-        # resume with warmup_steps_override and capture the SequentialLR
+        # resume with warmup_steps_override and capture the LambdaLR
         captured_schedulers = []
         import torch.optim as optim
-        original_sequential = optim.lr_scheduler.SequentialLR
+        original_lambda = optim.lr_scheduler.LambdaLR
 
-        def capture_sequential(*args, **kwargs):
-            sched = original_sequential(*args, **kwargs)
+        def capture_lambda(*args, **kwargs):
+            sched = original_lambda(*args, **kwargs)
             captured_schedulers.append(sched)
             return sched
 
-        with patch("train_seq2seq.optim.lr_scheduler.SequentialLR",
-                   side_effect=capture_sequential):
+        with patch("train_seq2seq.optim.lr_scheduler.LambdaLR",
+                   side_effect=capture_lambda):
             run_training(config_path, semids_path,
                          resume_path=checkpoint_path,
                          warmup_steps_override=warmup_steps_override)
 
-        assert len(captured_schedulers) == 1, "SequentialLR must be created exactly once"
+        assert len(captured_schedulers) == 1, "LambdaLR must be created exactly once"
         last_lr = captured_schedulers[0].get_last_lr()[0]
         assert last_lr < config["seq2seq"]["learning_rate"], (
             f"LR ({last_lr:.6f}) must be below initial LR "
@@ -252,15 +252,15 @@ class TestConfigOverrides:
         _, config_path = seq2seq_config
 
         captured_lr = None
-        original_adamw = optim.AdamW
+        original_adam = optim.Adam
 
         def capture_lr(*args, **kwargs):
             nonlocal captured_lr
             captured_lr = kwargs.get('lr')
-            return original_adamw(*args, **kwargs)
+            return original_adam(*args, **kwargs)
 
         overrides = ["seq2seq.learning_rate=0.1234", "seq2seq.early_stopping=False"]
-        with patch("train_seq2seq.optim.AdamW", side_effect=capture_lr):
+        with patch("train_seq2seq.optim.Adam", side_effect=capture_lr):
             run_training(config_path, semids_path, overrides=overrides)
 
         assert captured_lr == 0.1234
