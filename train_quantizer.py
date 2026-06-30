@@ -38,7 +38,12 @@ def create_model(config, input_dim):
     hidden_dims = config.model.hidden_dimensions
     codebook_layers = config.model.codebook_layers
     loss_type = getattr(config.model, 'loss_type', 'mse')
-    normalize = getattr(config.data, 'normalize_data', True)
+
+    if "normalize_inputs" in config.model:
+        normalize = config.model.normalize_inputs
+    else:
+        normalize = True
+        logger.info("model.normalize_inputs not specified. Defaulting to True.")
 
     if quantizer_type == "rqvae":
         quantization_method_str = getattr(config.model, 'quantization_method', 'ste')
@@ -66,7 +71,8 @@ def create_model(config, input_dim):
             codebook_layers=codebook_layers,
             commitment_weight=config.model.commitment_weight,
             quantization_method=quantization_method,
-            distance_mode=distance_mode
+            distance_mode=distance_mode,
+            normalize=normalize
         )
         logger.info(f"Created RQ-VAE model with {quantization_method_str} quantization, codebook_size={config.model.codebook_size}, layers={codebook_layers}")
     

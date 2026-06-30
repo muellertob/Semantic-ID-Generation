@@ -17,6 +17,7 @@ model:
   loss_type: l1
   projection_type: "mlp_2_hidden"
   inner_dim: 256
+  normalize_inputs: True          # VAE model-internal input normalization layer (BatchNorm + L2 Norm)
 
 # training configuration (FSQ)
 train:

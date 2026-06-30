@@ -13,6 +13,11 @@ def load_trained_model(model_path, config, device, input_dim):
     """Load a trained quantizer model (FSQ or RQ-VAE)."""
     quantizer_type = getattr(config.model, 'quantizer_type', 'rqvae')
     
+    if "normalize_inputs" in config.model:
+        normalize = config.model.normalize_inputs
+    else:
+        normalize = True
+    
     if quantizer_type == 'rqvae':
         from modules.rqvae.model import RQ_VAE
         model = RQ_VAE(
@@ -22,6 +27,7 @@ def load_trained_model(model_path, config, device, input_dim):
             codebook_size=config.model.codebook_size,
             codebook_layers=config.model.codebook_layers,
             commitment_weight=config.model.commitment_weight,
+            normalize=normalize
         )
         model.load_state_dict(torch.load(model_path, map_location=device), strict=False)
         model.to(device)
@@ -41,7 +47,7 @@ def load_trained_model(model_path, config, device, input_dim):
             latent_dim=config.model.latent_dimension,
             level_list=config.model.level_list,
             loss_type=getattr(config.model, 'loss_type', 'mse'),
-            normalize=getattr(config.data, 'normalize_data', True),
+            normalize=normalize,
             projection_type=projection_type,
             inner_dim=inner_dim
         )
@@ -59,7 +65,7 @@ def load_trained_model(model_path, config, device, input_dim):
             latent_dim=config.model.latent_dimension,
             level_list=config.model.level_list,
             loss_type=getattr(config.model, 'loss_type', 'mse'),
-            normalize=getattr(config.data, 'normalize_data', True),
+            normalize=normalize,
             projection_type=projection_type,
             inner_dim=inner_dim
         )

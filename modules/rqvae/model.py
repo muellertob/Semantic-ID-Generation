@@ -13,7 +13,8 @@ def RQ_VAE(
         codebook_layers=3, 
         commitment_weight=0.25, 
         quantization_method=QuantizeForwardMode.STE, 
-        distance_mode=QuantizeDistance.L2
+        distance_mode=QuantizeDistance.L2,
+        normalize=True
     ) -> QuantizedAutoEncoder:
         encoder = Encoder(
             input_dim=input_dim, 
@@ -40,5 +41,6 @@ def RQ_VAE(
             decoder=decoder, 
             quantizer=quantizer, 
             input_dim=input_dim, 
-            latent_dim=latent_dim
+            latent_dim=latent_dim,
+            normalize=normalize
         )

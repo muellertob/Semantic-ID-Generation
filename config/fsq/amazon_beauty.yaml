@@ -15,6 +15,7 @@ model:
   codebook_layers: 3              # Equivalent to number of layers/tokens
   level_list: [8, 6, 6]           # Bound dimensions per step (8*6*6 = 288 combinations)
   loss_type: l1
+  normalize_inputs: True          # VAE model-internal input normalization layer (BatchNorm + L2 Norm)
 
 # training configuration (FSQ)
 train:

@@ -17,6 +17,7 @@ model:
   commitment_weight: 0.25         # GRID used 0.25
   quantization_method: "ste"
   distance_method: "l2"
+  normalize_inputs: True          # VAE model-internal input normalization layer (BatchNorm + L2 Norm)
 
 # training configuration (RQ-VAE)
 train:
