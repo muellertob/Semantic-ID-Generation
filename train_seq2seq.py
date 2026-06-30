@@ -15,6 +15,7 @@ from data.sequence import SemanticIDSequenceDataset, collate_fn, collate_fn_with
 from utils.wandb import wandb_init, get_run_name, log_model_artifact
 from utils.model_id_generation import generate_model_id
 from utils.metrics import MetricAccumulator
+from utils.seed import set_seed
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -111,6 +112,9 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
         config = OmegaConf.merge(config, cli_conf)
         
     logger.info(f"Configuration:\n{OmegaConf.to_yaml(config)}")
+    
+    seed = config.general.get('seed', 42)
+    set_seed(seed)
     
     resume_optimizer = config.seq2seq.get('resume_optimizer', True)
     early_stopping = config.seq2seq.get('early_stopping', True)

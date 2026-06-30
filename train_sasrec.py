@@ -13,6 +13,7 @@ from data.loader import load_amazon_sequences
 from data.sequence import SASRecDataset, sasrec_collate_fn
 from modules.sasrec.model import SASRec, sample_negatives
 from utils.wandb import get_run_name, wandb_login
+from utils.seed import set_seed
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +87,10 @@ def run_training(config_path, resume_path=None, overrides=None):
         config = OmegaConf.merge(config, OmegaConf.from_dotlist(overrides))
         
     logger.info(f"Configuration:\n{OmegaConf.to_yaml(config)}")
+    
+    seed = config.general.get('seed', 42)
+    set_seed(seed)
+    
     logging.basicConfig(level=logging.INFO)
 
     device = torch.device(

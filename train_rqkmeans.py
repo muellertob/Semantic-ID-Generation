@@ -21,6 +21,7 @@ from data.factory import load_data
 from generate_semids import resolve_collisions
 from modules.rqkmeans import RQKMeans
 from utils.sid_evaluation import evaluate_semids
+from utils.seed import set_seed
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -43,6 +44,9 @@ def run_training(config_path: str | None, _config_override=None, overrides=None)
             config = OmegaConf.merge(config, OmegaConf.from_dotlist(overrides))
 
     logger.info(f"Configuration:\n{OmegaConf.to_yaml(config)}")
+
+    seed = config.general.get('seed', 42)
+    set_seed(seed)
 
     embeddings = load_data(config, split="all")
     logger.info(f"Loaded {len(embeddings)} item embeddings, dim={embeddings.shape[1]}")

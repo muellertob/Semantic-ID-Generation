@@ -22,13 +22,9 @@ from data.factory import load_data
 from modules.rqvae.model import RQ_VAE
 from modules.fsq.model import FSQ_AutoEncoder, ResidualFSQ_AutoEncoder
 from utils.model_id_generation import generate_model_id
+from utils.seed import set_seed
 
 logger = logging.getLogger(__name__)
-
-def set_seed(seed=42):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
 
 def create_model(config, input_dim):
     """
@@ -267,7 +263,7 @@ def run_training(config_path, overrides=None):
     if overrides:
         config = OmegaConf.merge(config, OmegaConf.from_dotlist(overrides))
     logger.info(f"Configuration:\n{OmegaConf.to_yaml(config)}")
-    seed = getattr(config.train, 'seed', 42)
+    seed = config.general.get('seed', 42)
     set_seed(seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
     model_id = generate_model_id(config)
