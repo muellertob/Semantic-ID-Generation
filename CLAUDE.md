@@ -58,10 +58,6 @@ All main workflows are orchestrated via `main.py`. Any config parameter can be o
   ```
 
 ### 2. Other Executable Scripts
-* **Hyperparameter Tuning (RQ-VAE):**
-  ```bash
-  python hyperparameter.py --config config/<config_file>.yaml [--search_type random/grid] [--num_trials N]
-  ```
 * **Evaluate Naive Baselines:**
   ```bash
   python test_naive_baselines.py --config config/<config_file>.yaml --semids outputs/semids.pt
@@ -94,7 +90,7 @@ Tests are managed using `pytest`. Configuration options are defined in `pyprojec
 
 ## Directory Structure
 
-- **Root Scripts:** `main.py`, `train_quantizer.py`, `train_rqkmeans.py`, `train_seq2seq.py`, `test_seq2seq.py`, `train_sasrec.py`, `test_sasrec.py`, `generate_semids.py`, `test_naive_baselines.py`, `hyperparameter.py`.
+- **Root Scripts:** `main.py`, `train_quantizer.py`, `train_rqkmeans.py`, `train_seq2seq.py`, `test_seq2seq.py`, `train_sasrec.py`, `test_sasrec.py`, `generate_semids.py`, `test_naive_baselines.py`.
 - **`modules/`**: Package-based model implementations.
   - **`rqvae/`**: Core RQ-VAE SID generation.
     - `model.py`: Main `RQ_VAE` class.
