@@ -10,6 +10,7 @@ from modules.recommender import TigerSeq2Seq
 from data.loader import load_amazon_sequences
 from data.sequence import SemanticIDSequenceDataset, collate_fn
 from train_seq2seq import compute_metrics
+from utils.seed import set_seed, seed_worker, get_seeded_generator
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -21,6 +22,9 @@ def run_testing(config_path, semantic_ids_path, model_path, overrides=None):
     config = OmegaConf.load(config_path)
     if overrides:
         config = OmegaConf.merge(config, OmegaConf.from_dotlist(overrides))
+        
+    seed = config.general.get('seed', 42)
+    set_seed(seed)
         
     logger.info(f"Configuration:\n{OmegaConf.to_yaml(config)}")
     device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
@@ -36,7 +40,7 @@ def run_testing(config_path, semantic_ids_path, model_path, overrides=None):
     semantic_ids = semids_data['semantic_ids'] # [num_items, codebook_layers]
     
     logger.info(f"Loaded Semantic IDs with shape: {semantic_ids.shape}")
-
+ 
     # load sequential data
     logger.info("Loading User History Data (Test Split)...")
     sequences, num_users, num_items = load_amazon_sequences(category=config.data.category)
@@ -58,13 +62,16 @@ def run_testing(config_path, semantic_ids_path, model_path, overrides=None):
     
     test_collate_fn = partial(collate_fn, max_len=config.seq2seq.get('max_history_len', 20))
     
+    g = get_seeded_generator(seed)
     test_loader = DataLoader(
         test_dataset,
         batch_size=metric_batch_size,
         shuffle=False,
         collate_fn=test_collate_fn,
         num_workers=num_workers,
-        persistent_workers=persistent_workers
+        persistent_workers=persistent_workers,
+        generator=g,
+        worker_init_fn=seed_worker
     )
     
     # initialize model

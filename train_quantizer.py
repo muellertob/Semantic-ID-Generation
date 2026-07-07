@@ -22,7 +22,7 @@ from data.factory import load_data
 from modules.rqvae.model import RQ_VAE
 from modules.fsq.model import FSQ_AutoEncoder, ResidualFSQ_AutoEncoder
 from utils.model_id_generation import generate_model_id
-from utils.seed import set_seed
+from utils.seed import set_seed, seed_worker, get_seeded_generator
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +126,13 @@ def train(model, data, optimizer, num_epochs, device, config):
     epoch_progress = tqdm(range(num_epochs), total=num_epochs, desc="Training Loop")
     results = []
 
-    train_loader = DataLoader(data, batch_size=config.data.batch_size, shuffle=True)
+    train_loader = DataLoader(
+        data,
+        batch_size=config.data.batch_size,
+        shuffle=True,
+        generator=get_seeded_generator(config.general.get('seed', 42)),
+        worker_init_fn=seed_worker
+    )
 
     quantizer_type = config.model.quantizer_type
     is_rqvae = quantizer_type == "rqvae"

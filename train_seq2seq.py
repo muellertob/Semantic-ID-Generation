@@ -15,7 +15,7 @@ from data.sequence import SemanticIDSequenceDataset, collate_fn, collate_fn_with
 from utils.wandb import wandb_init, get_run_name, log_model_artifact
 from utils.model_id_generation import generate_model_id
 from utils.metrics import MetricAccumulator
-from utils.seed import set_seed
+from utils.seed import set_seed, seed_worker, get_seeded_generator
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -171,13 +171,17 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
     else:
         train_collate_fn = partial(collate_fn, max_len=max_history_len)
     
+    g = get_seeded_generator(seed)
+
     train_loader = DataLoader(
         train_dataset,
         batch_size=config.seq2seq.get('batch_size', 256),
         shuffle=True,
         collate_fn=train_collate_fn,
         num_workers=num_workers,
-        persistent_workers=persistent_workers
+        persistent_workers=persistent_workers,
+        generator=g,
+        worker_init_fn=seed_worker
     )
     
     # dataloader for loss evaluation
@@ -189,7 +193,9 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
         shuffle=False,
         collate_fn=eval_collate_fn,
         num_workers=num_workers,
-        persistent_workers=persistent_workers
+        persistent_workers=persistent_workers,
+        generator=g,
+        worker_init_fn=seed_worker
     )
     
     # dataloader for metrics evaluation
@@ -203,7 +209,9 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
         shuffle=False,
         collate_fn=eval_collate_fn,
         num_workers=num_workers,
-        persistent_workers=persistent_workers
+        persistent_workers=persistent_workers,
+        generator=g,
+        worker_init_fn=seed_worker
     )
     
     # initialize model, defaulting to TIGER paper specs

@@ -16,6 +16,7 @@ from data.loader import load_amazon_sequences
 from data.sequence import SASRecDataset
 from modules.sasrec.model import SASRec
 from train_sasrec import evaluate_metrics
+from utils.seed import set_seed
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -28,6 +29,10 @@ def run_testing(config_path, model_path, overrides=None):
     config = OmegaConf.load(config_path)
     if overrides:
         config = OmegaConf.merge(config, OmegaConf.from_dotlist(overrides))
+        
+    # Set seed for reproducibility
+    seed = config.general.get('seed', 42)
+    set_seed(seed)
         
     logger.info(f"Configuration:\n{OmegaConf.to_yaml(config)}")
     device = torch.device(

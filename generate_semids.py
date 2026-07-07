@@ -3,6 +3,7 @@ import argparse
 from omegaconf import OmegaConf
 from data.factory import load_data
 from utils.sid_evaluation import evaluate_semids
+from utils.seed import set_seed
 import os
 import logging
 
@@ -144,6 +145,9 @@ def run_generation(config_path, model_path, output_path, batch_size=64, run_eval
     config = OmegaConf.load(config_path)
     if overrides:
         config = OmegaConf.merge(config, OmegaConf.from_dotlist(overrides))
+        
+    seed = config.general.get('seed', 42)
+    set_seed(seed)
         
     logger.info(f"Resolved Configuration:\n{OmegaConf.to_yaml(config)}")
     

@@ -13,7 +13,7 @@ from data.loader import load_amazon_sequences
 from data.sequence import SASRecDataset, sasrec_collate_fn
 from modules.sasrec.model import SASRec, sample_negatives
 from utils.wandb import get_run_name, wandb_login
-from utils.seed import set_seed
+from utils.seed import set_seed, seed_worker, get_seeded_generator
 
 logger = logging.getLogger(__name__)
 
@@ -131,10 +131,17 @@ def run_training(config_path, resume_path=None, overrides=None):
 
     train_ds = SASRecDataset(sequences, num_items=num_items, max_len=max_seq_len, mode='train')
     eval_ds = SASRecDataset(sequences, num_items=num_items, max_len=max_seq_len, mode='eval')
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
-                              collate_fn=sasrec_collate_fn, num_workers=num_workers)
-    eval_loader = DataLoader(eval_ds, batch_size=batch_size, shuffle=False,
-                             collate_fn=sasrec_collate_fn, num_workers=num_workers)
+    g = get_seeded_generator(seed)
+    train_loader = DataLoader(
+        train_ds, batch_size=batch_size, shuffle=True,
+        collate_fn=sasrec_collate_fn, num_workers=num_workers,
+        generator=g, worker_init_fn=seed_worker
+    )
+    eval_loader = DataLoader(
+        eval_ds, batch_size=batch_size, shuffle=False,
+        collate_fn=sasrec_collate_fn, num_workers=num_workers,
+        generator=g, worker_init_fn=seed_worker
+    )
 
     # model
     model = SASRec(

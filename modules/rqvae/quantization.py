@@ -6,7 +6,7 @@ from sklearn.cluster import KMeans
 
 from schemas.quantization import QuantizeOutput, QuantizeForwardMode, QuantizeDistance
 from utils.metrics import calculate_quantizer_metrics
-
+from utils.seed import get_seed
 
 class QuantizeLoss(nn.Module):
     def __init__(self, commitment_weight: float = 1.0) -> None:
@@ -86,7 +86,7 @@ class Quantization(nn.Module):
 
         # detach to ensure no gradients
         z_np = z.detach().cpu().numpy()
-        kmeans = KMeans(n_clusters=self.codebook_size, init='k-means++', n_init='auto', max_iter=300)
+        kmeans = KMeans(n_clusters=self.codebook_size, init='k-means++', n_init='auto', max_iter=300, random_state=get_seed())
         kmeans.fit(z_np)
         
         self.embedding.weight.copy_(torch.from_numpy(kmeans.cluster_centers_).to(self.device))

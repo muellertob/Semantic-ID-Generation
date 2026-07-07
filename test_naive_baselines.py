@@ -11,6 +11,7 @@ from tqdm import tqdm
 from data.loader import load_amazon_sequences
 from data.sequence import SemanticIDSequenceDataset, collate_fn
 from utils.metrics import MetricAccumulator
+from utils.seed import set_seed, seed_worker, get_seeded_generator
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -59,6 +60,9 @@ def compute_popularity(history_data, num_items):
 def run_baselines(config_path, semantic_ids_path, k_list=[5, 10, 20]):
     config = OmegaConf.load(config_path)
     
+    seed = config.general.get('seed', 42)
+    set_seed(seed)
+    
     logger.info(f"Loading Semantic IDs from {semantic_ids_path}")
     if not os.path.exists(semantic_ids_path):
         raise FileNotFoundError(f"Semantic IDs file not found at {semantic_ids_path}")
@@ -87,11 +91,14 @@ def run_baselines(config_path, semantic_ids_path, k_list=[5, 10, 20]):
     
     test_collate_fn = partial(collate_fn, max_len=config.seq2seq.get('max_history_len', 20))
     
+    g = get_seeded_generator(seed)
     test_loader = DataLoader(
         test_dataset,
         batch_size=512,
         shuffle=False,
-        collate_fn=test_collate_fn
+        collate_fn=test_collate_fn,
+        generator=g,
+        worker_init_fn=seed_worker
     )
     
     random_accumulator = MetricAccumulator(k_list=k_list, num_layers=tuple_size)
