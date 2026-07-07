@@ -95,13 +95,25 @@ def run_training(config_path: str | None, _config_override=None, overrides=None)
         model.save(model_path)
         logger.info(f"RQKMeans model saved to: {model_path}")
 
-    # Write metadata JSON if path provided
+    # write metadata JSON if path provided
     if config.general.get('meta_json', None):
         meta_json_path = config.general.meta_json
         os.makedirs(os.path.dirname(meta_json_path), exist_ok=True)
+        c = eval_stats.get("collision", {})
+        u = eval_stats.get("utilisation", {})
+        per_layer_u = u.get("per_layer", [])
         with open(meta_json_path, 'w') as f:
             json.dump({
                 "model_path": model_path,
+                "collision_rate": float(c.get("collision_rate", 0.0)),
+                "n_collisions": int(c.get("n_collisions", 0)),
+                "max_depth": int(c.get("max_depth", 0)),
+                "mean_depth": float(c.get("mean_depth", 0.0)),
+                "median_depth": float(c.get("median_depth", 0.0)),
+                "p90_depth": float(c.get("p90_depth", 0.0)),
+                "p99_depth": float(c.get("p99_depth", 0.0)),
+                "perplexity_per_layer": [float(layer.get("perplexity", 0.0)) for layer in per_layer_u],
+                "coverage_per_layer": [float(layer.get("coverage", 0.0)) for layer in per_layer_u],
                 "sid_report": sid_report_text
             }, f)
 
