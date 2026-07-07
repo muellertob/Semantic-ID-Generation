@@ -333,6 +333,7 @@ def run_training(config_path, overrides=None):
             run_name=model_id,
             artifact_type=f"{quantizer_type}-tokenizer",
             metadata={"final_loss": train_results[-1].get("Loss"), "config": OmegaConf.to_container(config, resolve=True)},
+            config=config,
         )
         wandb.finish()
 

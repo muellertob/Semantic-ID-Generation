@@ -375,6 +375,7 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
                         artifact_type="tiger-recommender",
                         metadata={"epoch": epoch, "recall@5": current_recall_at_5,
                                   "rqvae_semids": semantic_ids_path},
+                        config=config,
                     )
             else:
                 recall_no_improve += 1

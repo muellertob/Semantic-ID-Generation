@@ -38,6 +38,7 @@ seq2seq:
 general:
   seed: 10
   use_wandb: True
+  wandb_log_artifacts: False
   wandb_project_recommender: "mt-amazon-recommender"
   wandb_entity: "tobias-mueller99-johannes-kepler-universit-t-linz"
   save_model: True
