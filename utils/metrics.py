@@ -4,7 +4,7 @@ import numpy as np
 class MetricAccumulator:
     """
     Accumulates retrieval metrics across multiple batches for accurate averaging,
-    including hierarchical metrics for each slice of the target sequence.
+    fully vectorized on PyTorch devices (CUDA/MPS/CPU).
     """
     def __init__(self, k_list=[1, 5, 10], num_layers=4):
         self.k_list = k_list
@@ -15,8 +15,13 @@ class MetricAccumulator:
         self.total_samples = 0
         self.total_recall = {k: 0.0 for k in self.k_list}
         self.total_ndcg = {k: 0.0 for k in self.k_list}
-        self.hierarchical_recall = {f"h@{k}_slice_{i}": 0.0 for k in self.k_list for i in range(1, self.num_layers + 1)}
+        self.hierarchical_recall = {
+            f"h@{k}_slice_{i}": 0.0 
+            for k in self.k_list 
+            for i in range(1, self.num_layers + 1)
+        }
 
+    @torch.no_grad()
     def update(self, predictions, targets):
         """
         Update the accumulator with results from a new batch.
@@ -25,6 +30,7 @@ class MetricAccumulator:
             predictions (torch.Tensor): [Batch, Beam_Size, Codebook_Layers]
             targets (torch.Tensor): [Batch, 1, Codebook_Layers] or [Batch, Codebook_Layers]
         """
+        device = predictions.device
         batch_size = targets.size(0)
         self.total_samples += batch_size
 
@@ -32,29 +38,34 @@ class MetricAccumulator:
         if targets.dim() == 3:
             targets = targets.squeeze(1)
 
-        # convert tensors to lists of tuples for easier comparison
-        targets_list = [tuple(t.tolist()) for t in targets]
+        max_k = max(self.k_list)
         
-        for i in range(batch_size):
-            target_tuple = targets_list[i]
-            max_k = max(self.k_list)
-            pred_tuples = [tuple(p.tolist()) for p in predictions[i][:max_k]]
-            
-            for k in self.k_list:
-                current_preds = pred_tuples[:k]
-                
-                # check for exact full match
-                if target_tuple in current_preds:
-                    self.total_recall[k] += 1.0
-                    rank = current_preds.index(target_tuple) + 1
-                    self.total_ndcg[k] += 1.0 / np.log2(rank + 1)
-                
-                # check slices for partial matches
-                for layer in range(1, self.num_layers + 1):
-                    target_slice = target_tuple[:layer]
-                    pred_slices = [p[:layer] for p in current_preds]
-                    if target_slice in pred_slices:
-                        self.hierarchical_recall[f"h@{k}_slice_{layer}"] += 1.0
+        # exact match comparison: [Batch, max_k, Codebook_Layers] vs [Batch, 1, Codebook_Layers]
+        full_match = (predictions[:, :max_k, :] == targets.unsqueeze(1)).all(dim=-1) # [Batch, max_k]
+
+        # handle potential duplicates in predictions: only keep the first match per row
+        if full_match.any():
+            cum_match = full_match.cumsum(dim=-1)
+            full_match = full_match & (cum_match == 1)
+
+        # precompute NDCG rank discount weights
+        ranks = torch.arange(max_k, device=device).unsqueeze(0)  # [1, max_k]; 0-based ranks
+        discounts = 1.0 / torch.log2(ranks.float() + 2.0)        # [1, max_k]; +2 for 1-based rank in log2
+
+        for k in self.k_list:
+            # Recall@k: exact match is within top k
+            recall_k = full_match[:, :k].any(dim=-1).float().sum().item()
+            self.total_recall[k] += recall_k
+
+            # NDCG@k: sum of matching position discounts within top k
+            ndcg_k = (full_match[:, :k] * discounts[:, :k]).sum(dim=-1).sum().item()
+            self.total_ndcg[k] += ndcg_k
+
+            # Hierarchical Recall@k for prefix slices
+            for layer in range(1, self.num_layers + 1):
+                slice_match = (predictions[:, :k, :layer] == targets[:, None, :layer]).all(dim=-1) # None equals unsqueeze(1) -> [Batch, 1, layer]
+                h_recall_layer = slice_match.any(dim=-1).float().sum().item()
+                self.hierarchical_recall[f"h@{k}_slice_{layer}"] += h_recall_layer
 
     def compute(self):
         """Returns the final averaged metrics."""
