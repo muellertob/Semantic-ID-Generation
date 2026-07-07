@@ -33,6 +33,7 @@ seq2seq:
   early_stopping: True
   early_stopping_patience: 15
   resume_optimizer: True
+  num_workers: 4
 
 # additional configuration
 general:
