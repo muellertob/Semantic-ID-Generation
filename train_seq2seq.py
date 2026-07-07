@@ -20,12 +20,18 @@ from utils.seed import set_seed, seed_worker, get_seeded_generator
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def save_checkpoint(model, optimizer, scheduler, epoch, metric_val, path, metric_name="recall@5"):
+# enable TensorFloat-32 (TF32) on CUDA if available
+if torch.cuda.is_available():
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+
+def save_checkpoint(model, optimizer, scheduler, scaler, epoch, metric_val, path, metric_name="recall@5"):
     torch.save({
         'epoch': epoch,
         'model_state_dict': model.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
         'scheduler_state_dict': scheduler.state_dict() if scheduler else None,
+        'scaler_state_dict': scaler.state_dict() if scaler else None,
         metric_name: metric_val,
     }, path)
 
@@ -36,18 +42,20 @@ def evaluate_loss(model, dataloader, device):
     model.eval()
     total_loss = 0
     total_loss_per_token = None
+    is_cuda = (device.type == 'cuda')
     
     with torch.no_grad():
         for batch in tqdm(dataloader, desc="Evaluating Loss"):
-            history_tuples = batch['history_tuples'].to(device)
-            target_tuples = batch['target_tuples'].to(device)
-            user_ids = batch['user_ids'].to(device)
+            history_tuples = batch['history_tuples'].to(device, non_blocking=True)
+            target_tuples = batch['target_tuples'].to(device, non_blocking=True)
+            user_ids = batch['user_ids'].to(device, non_blocking=True)
             
-            outputs = model(
-                history_tuples=history_tuples,
-                target_tuples=target_tuples,
-                user_ids=user_ids
-            )
+            with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=is_cuda):
+                outputs = model(
+                    history_tuples=history_tuples,
+                    target_tuples=target_tuples,
+                    user_ids=user_ids
+                )
             
             total_loss += outputs['loss'].item()
             
@@ -119,6 +127,7 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
     resume_optimizer = config.seq2seq.get('resume_optimizer', True)
     early_stopping = config.seq2seq.get('early_stopping', True)
     device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
+    is_cuda = (device.type == 'cuda')
     
     logger.info(f"Using device: {device}")
     
@@ -181,7 +190,8 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
         num_workers=num_workers,
         persistent_workers=persistent_workers,
         generator=g,
-        worker_init_fn=seed_worker
+        worker_init_fn=seed_worker,
+        pin_memory=is_cuda
     )
     
     # dataloader for loss evaluation
@@ -195,7 +205,8 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
         num_workers=num_workers,
         persistent_workers=persistent_workers,
         generator=g,
-        worker_init_fn=seed_worker
+        worker_init_fn=seed_worker,
+        pin_memory=is_cuda
     )
     
     # dataloader for metrics evaluation
@@ -211,7 +222,8 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
         num_workers=num_workers,
         persistent_workers=persistent_workers,
         generator=g,
-        worker_init_fn=seed_worker
+        worker_init_fn=seed_worker,
+        pin_memory=is_cuda
     )
     
     # initialize model, defaulting to TIGER paper specs
@@ -236,16 +248,22 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
         wandb.watch(model, log="all")
 
     # define optimizer and scheduler
-    optimizer = optim.Adam(
-        model.parameters(), 
-        lr=config.seq2seq.get('learning_rate', 1e-3),
-        weight_decay=config.seq2seq.get('weight_decay', 0.0001)
-    )
+    optimizer_args = {
+        "lr": config.seq2seq.get('learning_rate', 1e-3),
+        "weight_decay": config.seq2seq.get('weight_decay', 0.0001)
+    }
+    if is_cuda and torch.__version__ >= '2.0':
+        optimizer_args["fused"] = True
+        logger.info("Using fused Adam optimizer")
+        
+    optimizer = optim.Adam(model.parameters(), **optimizer_args)
     
     start_epoch = 0
     global_step = 0
     best_recall_at_5 = 0.0
     
+    scaler = torch.amp.GradScaler('cuda', enabled=is_cuda)
+
     # RESUME CHECKPOINT
     if resume_path:
         logger.info(f"Resuming training from checkpoint: {resume_path}")
@@ -256,6 +274,9 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
         model.load_state_dict(checkpoint['model_state_dict'])
         if resume_optimizer:
             optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        if 'scaler_state_dict' in checkpoint and checkpoint['scaler_state_dict'] is not None:
+            scaler.load_state_dict(checkpoint['scaler_state_dict'])
+            logger.info("Loaded scaler state dict from checkpoint")
         
         # checkpoint saves the epoch that just finished, so we start from the next one
         start_epoch = checkpoint['epoch'] + 1
@@ -313,24 +334,26 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
         progress_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs}")
         
         for batch in progress_bar:
-            history_tuples = batch['history_tuples'].to(device)
-            target_tuples = batch['target_tuples'].to(device)
-            user_ids = batch['user_ids'].to(device)
+            history_tuples = batch['history_tuples'].to(device, non_blocking=True)
+            target_tuples = batch['target_tuples'].to(device, non_blocking=True)
+            user_ids = batch['user_ids'].to(device, non_blocking=True)
             
-            optimizer.zero_grad()
+            optimizer.zero_grad(set_to_none=True)
             
             # forward pass
-            outputs = model(
-                history_tuples=history_tuples,
-                target_tuples=target_tuples,
-                user_ids=user_ids
-            )
-            
-            loss = outputs['loss']
+            with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=is_cuda):
+                outputs = model(
+                    history_tuples=history_tuples,
+                    target_tuples=target_tuples,
+                    user_ids=user_ids
+                )
+                loss = outputs['loss']
             
             # backward pass
-            loss.backward()
-            optimizer.step()
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+            
             if scheduler is not None:
                 scheduler.step() # step scheduler every batch
             global_step += 1
@@ -376,7 +399,7 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
                     os.makedirs("models/recommender", exist_ok=True)
                     model_id = f"{recommender_run_name}_best"
                     save_path = f"models/recommender/{model_id}.pt"
-                    save_checkpoint(model, optimizer, scheduler, epoch, current_recall_at_5, save_path, "recall@5")
+                    save_checkpoint(model, optimizer, scheduler, scaler, epoch, current_recall_at_5, save_path, "recall@5")
                     logger.info(f"New best Recall@5 achieved ({current_recall_at_5:.4f})! Model saved to {save_path}")
                     log_model_artifact(
                         model_path=save_path,

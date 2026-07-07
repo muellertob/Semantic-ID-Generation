@@ -26,6 +26,11 @@ from utils.seed import set_seed, seed_worker, get_seeded_generator
 
 logger = logging.getLogger(__name__)
 
+# enable TensorFloat-32 (TF32) on CUDA if available
+if torch.cuda.is_available():
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+
 def create_model(config, input_dim):
     """
     Create a quantizer model based on the provided configuration.
@@ -131,7 +136,8 @@ def train(model, data, optimizer, num_epochs, device, config):
         batch_size=config.data.batch_size,
         shuffle=True,
         generator=get_seeded_generator(config.general.get('seed', 42)),
-        worker_init_fn=seed_worker
+        worker_init_fn=seed_worker,
+        pin_memory=(device.type == 'cuda')
     )
 
     quantizer_type = config.model.quantizer_type
@@ -195,8 +201,8 @@ def train(model, data, optimizer, num_epochs, device, config):
             model.kmeans_init_codebooks(kmeans_init_data, temperature=current_temperature)
 
         for batch in train_loader:
-            batch = batch.to(device).float()
-            optimizer.zero_grad()
+            batch = batch.to(device, non_blocking=True).float()
+            optimizer.zero_grad(set_to_none=True)
             
             if is_rqvae:
                 result = model(batch, temperature=current_temperature)
@@ -302,13 +308,23 @@ def run_training(config_path, overrides=None):
     model.to(device)
 
     # setup optimizer
+    is_cuda = (device.type == 'cuda')
     optimizer_type = getattr(config.train, 'optimizer', 'adamw').lower()
+    
+    optimizer_args = {
+        "lr": config.train.learning_rate,
+        "weight_decay": config.train.weight_decay
+    }
+    if is_cuda and torch.__version__ >= '2.0' and optimizer_type in ('adamw', 'adam', 'adagrad'):
+        optimizer_args["fused"] = True
+        logger.info(f"Using fused {optimizer_type} optimizer")
+
     if optimizer_type == 'adamw':
-        optimizer = optim.AdamW(model.parameters(), lr=config.train.learning_rate, weight_decay=config.train.weight_decay)
+        optimizer = optim.AdamW(model.parameters(), **optimizer_args)
     elif optimizer_type == 'adagrad':
-        optimizer = optim.Adagrad(model.parameters(), lr=config.train.learning_rate, weight_decay=config.train.weight_decay)
+        optimizer = optim.Adagrad(model.parameters(), **optimizer_args)
     elif optimizer_type == 'adam':
-        optimizer = optim.Adam(model.parameters(), lr=config.train.learning_rate, weight_decay=config.train.weight_decay)
+        optimizer = optim.Adam(model.parameters(), **optimizer_args)
     else:
         raise ValueError(f"Unknown optimizer: {optimizer_type}")
 

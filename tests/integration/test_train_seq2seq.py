@@ -36,12 +36,13 @@ def _run_and_save_checkpoint(tmp_path, config_path, semids_path):
     checkpoint_path = str(tmp_path / "best.pt")
 
     with patch("train_seq2seq.save_checkpoint") as mock_save:
-        def _write(model, opt, sched, epoch, val, _path, metric_name="recall@5"):
+        def _write(model, opt, sched, scaler, epoch, val, _path, metric_name="recall@5"):
             torch.save({
                 "epoch": epoch,
                 "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": opt.state_dict(),
                 "scheduler_state_dict": sched.state_dict() if sched else None,
+                "scaler_state_dict": scaler.state_dict() if scaler else None,
                 "recall@5": val,
             }, checkpoint_path)
         mock_save.side_effect = _write
@@ -69,12 +70,13 @@ class TestCheckpointSaved:
         ckpt_path = str(tmp_path / "best.pt")
 
         with patch("train_seq2seq.save_checkpoint") as mock_save:
-            def _write(model, opt, sched, epoch, val, _path, metric_name="recall@5"):
+            def _write(model, opt, sched, scaler, epoch, val, _path, metric_name="recall@5"):
                 torch.save({
                     "epoch": epoch,
                     "model_state_dict": model.state_dict(),
                     "optimizer_state_dict": opt.state_dict(),
                     "scheduler_state_dict": sched.state_dict() if sched else None,
+                    "scaler_state_dict": scaler.state_dict() if scaler else None,
                     "recall@5": val,
                 }, ckpt_path)
             mock_save.side_effect = _write
@@ -83,7 +85,7 @@ class TestCheckpointSaved:
         assert mock_save.called, "save_checkpoint must be called when recall improves"
 
         # verify correct epoch, recall value, and metric_name were passed.
-        _, _, _, epoch_saved, recall_saved, _, metric_name_saved = mock_save.call_args.args
+        _, _, _, _, epoch_saved, recall_saved, _, metric_name_saved = mock_save.call_args.args
         assert epoch_saved == 1, (
             f"Expected checkpoint at epoch 1 (last of 2-epoch run), got {epoch_saved}"
         )
