@@ -1,10 +1,12 @@
 """
-Integration tests for checkpoint saving and resumption in train_seq2seq.py.
+Integration tests for the training orchestration script (train_seq2seq.py).
 
 Verifies:
   - Initial training run saves a checkpoint when recall improves
   - Resuming from checkpoint restores optimizer state
   - warmup_steps_override produces a decaying LR after warmup
+  - Config overrides are respected
+  - eval_delay_epochs skips retrieval metrics calculation during warmup phase
 
 Fixtures (seq2seq_config, semids_path, mock_seq2seq_model, mock_amazon_sequences)
 are defined in tests/integration/conftest.py.
@@ -264,3 +266,40 @@ class TestConfigOverrides:
             run_training(config_path, semids_path, overrides=overrides)
 
         assert captured_lr == 0.1234
+
+
+class TestEvalDelayEpochs:
+
+    @patch("train_seq2seq.load_amazon_sequences")
+    @patch("train_seq2seq.TigerSeq2Seq")
+    def test_eval_delay_epochs_skips_metrics(
+            self, mock_model_class, mock_load_data,
+            seq2seq_config, semids_path, mock_seq2seq_model, mock_amazon_sequences):
+        """When num_epochs=2 and eval_delay_epochs=2, compute_metrics should not be called at all."""
+        from train_seq2seq import run_training
+
+        mock_model_class.return_value = mock_seq2seq_model
+        mock_load_data.return_value = (mock_amazon_sequences, 10, 20)
+        _, config_path = seq2seq_config
+
+        overrides = ["seq2seq.num_epochs=2", "seq2seq.eval_delay_epochs=2", "seq2seq.eval_epoch_interval=1"]
+        with patch("train_seq2seq.compute_metrics") as mock_compute:
+            run_training(config_path, semids_path, overrides=overrides)
+            assert not mock_compute.called, "compute_metrics should not be called when delay is equal to or greater than num_epochs"
+
+    @patch("train_seq2seq.compute_metrics", return_value=(FAKE_RECALL, FAKE_NDCG, FAKE_HIER))
+    @patch("train_seq2seq.load_amazon_sequences")
+    @patch("train_seq2seq.TigerSeq2Seq")
+    def test_eval_delay_epochs_allows_metrics_after_delay(
+            self, mock_model_class, mock_load_data, mock_compute,
+            seq2seq_config, semids_path, mock_seq2seq_model, mock_amazon_sequences):
+        """When num_epochs=2 and eval_delay_epochs=1 and eval_epoch_interval=1, compute_metrics should be called once (for epoch 2)."""
+        from train_seq2seq import run_training
+
+        mock_model_class.return_value = mock_seq2seq_model
+        mock_load_data.return_value = (mock_amazon_sequences, 10, 20)
+        _, config_path = seq2seq_config
+
+        overrides = ["seq2seq.num_epochs=2", "seq2seq.eval_delay_epochs=1", "seq2seq.eval_epoch_interval=1"]
+        run_training(config_path, semids_path, overrides=overrides)
+        assert mock_compute.call_count == 1, "compute_metrics should be called exactly once (for epoch 2)"

@@ -361,7 +361,8 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
         stop_training = False
         # compute retrieval metrics every eval_epoch_interval epochs and on the last epoch
         eval_epoch_interval = config.seq2seq.get('eval_epoch_interval', 5)
-        if not stop_training and ((epoch + 1) % eval_epoch_interval == 0 or (epoch + 1) == num_epochs):
+        eval_delay_epochs = config.seq2seq.get('eval_delay_epochs', 0)
+        if not stop_training and (epoch + 1) > eval_delay_epochs and ((epoch + 1) % eval_epoch_interval == 0 or (epoch + 1) == num_epochs):
             logger.info("Computing retrieval metrics (Beam Search)...")
             avg_recall, avg_ndcg, avg_hierarchical = compute_metrics(model, eval_loader_metrics, device)
             
