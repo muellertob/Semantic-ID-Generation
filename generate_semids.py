@@ -5,6 +5,7 @@ from data.factory import load_data
 from utils.sid_evaluation import evaluate_semids
 from utils.seed import set_seed
 import os
+import json
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -153,6 +154,7 @@ def run_generation(config_path, model_path, output_path, batch_size=64, run_eval
     Orchestrate semantic ID generation.
     """
     config = OmegaConf.load(config_path)
+    OmegaConf.set_struct(config, False)
     if overrides:
         config = OmegaConf.merge(config, OmegaConf.from_dotlist(overrides))
         
@@ -185,8 +187,10 @@ def run_generation(config_path, model_path, output_path, batch_size=64, run_eval
     logger.info(f"Generated raw semantic IDs shape: {semids.shape}")
 
     # EVALUATE SEMANTIC IDS
+    sid_report_text = ""
     if run_eval:
-        evaluate_semids(semids.cpu(), config)
+        eval_stats = evaluate_semids(semids.cpu(), config)
+        sid_report_text = eval_stats.get("report_text", "")
 
     # RESOLVE COLLISIONS
     # pass codebook_clusters as the limit for the collision token
@@ -211,6 +215,15 @@ def run_generation(config_path, model_path, output_path, batch_size=64, run_eval
         'sid_type': config.general.get('sid_type', 'Unknown')
     }, output_path)
     logger.info(f"Semantic IDs saved to: {output_path}")
+
+    # write metadata JSON if path provided
+    if config.general.get('meta_json', None):
+        meta_json_path = config.general.meta_json
+        os.makedirs(os.path.dirname(meta_json_path), exist_ok=True)
+        with open(meta_json_path, 'w') as f:
+            json.dump({
+                "sid_report": sid_report_text
+            }, f)
     
     logger.info(f"Semantic ID statistics:")
     logger.info(f"  Shape: {final_semids.shape}")

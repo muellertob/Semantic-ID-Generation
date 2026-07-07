@@ -13,6 +13,7 @@ import logging
 import random
 import numpy as np
 import os
+import json
 from omegaconf import OmegaConf
 
 from schemas.quantization import QuantizeForwardMode, QuantizeDistance
@@ -278,6 +279,7 @@ def run_training(config_path, overrides=None):
     Orchestrates the training process for the quantizer model based on the provided configuration.
     """
     config = OmegaConf.load(config_path)
+    OmegaConf.set_struct(config, False)
     if overrides:
         config = OmegaConf.merge(config, OmegaConf.from_dotlist(overrides))
     logger.info(f"Configuration:\n{OmegaConf.to_yaml(config)}")
@@ -357,6 +359,17 @@ def run_training(config_path, overrides=None):
     torch.save(checkpoint, model_path)
     logger.info(f"Training completed. Final results: {train_results[-1]}")
     logger.info(f"Model saved to: {model_path}")
+
+    # write metadata JSON if path provided
+    if config.general.get('meta_json', None):
+        meta_json_path = config.general.meta_json
+        os.makedirs(os.path.dirname(meta_json_path), exist_ok=True)
+        with open(meta_json_path, 'w') as f:
+            json.dump({
+                "model_path": model_path,
+                "wandb_run_id": checkpoint['wandb_run_id'],
+                "wandb_run_url": checkpoint['wandb_run_url']
+            }, f)
 
     if config.general.use_wandb:
         log_model_artifact(

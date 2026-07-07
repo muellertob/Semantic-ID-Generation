@@ -13,6 +13,7 @@ Usage:
 """
 import logging
 import os
+import json
 
 import torch
 from omegaconf import OmegaConf
@@ -40,6 +41,7 @@ def run_training(config_path: str | None, _config_override=None, overrides=None)
         config = _config_override
     else:
         config = OmegaConf.load(config_path)
+        OmegaConf.set_struct(config, False)
         if overrides:
             config = OmegaConf.merge(config, OmegaConf.from_dotlist(overrides))
 
@@ -63,10 +65,11 @@ def run_training(config_path: str | None, _config_override=None, overrides=None)
     logger.info(f"Raw semantic IDs shape: {sem_ids_raw.shape}")
 
     # evaluate on raw SIDs before collision resolution
-    evaluate_semids(
+    eval_stats = evaluate_semids(
         raw_semids=sem_ids_raw,
         config=config,
     )
+    sid_report_text = eval_stats.get("report_text", "")
 
     # collision resolution
     codebook_size = config.model.codebook_size
@@ -85,11 +88,22 @@ def run_training(config_path: str | None, _config_override=None, overrides=None)
     logger.info(f"Semantic IDs saved to: {output_path}")
 
     # optionally save the fitted model
+    model_path = None
     if config.general.save_model:
         model_path = config.general.model_path
         os.makedirs(os.path.dirname(model_path) or ".", exist_ok=True)
         model.save(model_path)
         logger.info(f"RQKMeans model saved to: {model_path}")
+
+    # Write metadata JSON if path provided
+    if config.general.get('meta_json', None):
+        meta_json_path = config.general.meta_json
+        os.makedirs(os.path.dirname(meta_json_path), exist_ok=True)
+        with open(meta_json_path, 'w') as f:
+            json.dump({
+                "model_path": model_path,
+                "sid_report": sid_report_text
+            }, f)
 
 
 def main():

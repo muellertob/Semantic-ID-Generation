@@ -4,6 +4,7 @@ import torch
 from torch.utils.data import DataLoader
 from omegaconf import OmegaConf
 import os
+import json
 from functools import partial
 
 from modules.recommender import TigerSeq2Seq
@@ -20,6 +21,7 @@ def run_testing(config_path, semantic_ids_path, model_path, overrides=None):
     Test TIGER Seq2Seq model on the test split.
     """
     config = OmegaConf.load(config_path)
+    OmegaConf.set_struct(config, False)
     if overrides:
         config = OmegaConf.merge(config, OmegaConf.from_dotlist(overrides))
         
@@ -128,6 +130,21 @@ def run_testing(config_path, semantic_ids_path, model_path, overrides=None):
     for key, val in avg_hierarchical.items():
         logger.info(f"{key}: {val:.4f}")
         
+    # write metadata JSON if path provided
+    if config.general.get('meta_json', None):
+        meta_json_path = config.general.meta_json
+        os.makedirs(os.path.dirname(meta_json_path), exist_ok=True)
+        metrics_dict = {}
+        for k in k_list:
+            metrics_dict[f"Recall@{k}"] = float(avg_recall[k])
+            metrics_dict[f"NDCG@{k}"] = float(avg_ndcg[k])
+        hier_dict = {k: float(v) for k, v in avg_hierarchical.items()}
+        with open(meta_json_path, 'w') as f:
+            json.dump({
+                "metrics": metrics_dict,
+                "hierarchical": hier_dict
+            }, f)
+
     return avg_recall, avg_ndcg, avg_hierarchical
 
 if __name__ == "__main__":

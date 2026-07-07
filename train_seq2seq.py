@@ -7,6 +7,7 @@ from omegaconf import OmegaConf
 from tqdm import tqdm
 import wandb
 import os
+import json
 from functools import partial
 import uuid
 
@@ -116,6 +117,7 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
     Orchestrate TIGER Seq2Seq training.
     """
     config = OmegaConf.load(config_path)
+    OmegaConf.set_struct(config, False)
     if overrides:
         cli_conf = OmegaConf.from_dotlist(overrides)
         config = OmegaConf.merge(config, cli_conf)
@@ -473,6 +475,17 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
             break
 
     logger.info("Training Finished.")
+    
+    # write metadata JSON if path provided
+    if config.general.get('meta_json', None):
+        meta_json_path = config.general.meta_json
+        os.makedirs(os.path.dirname(meta_json_path), exist_ok=True)
+        with open(meta_json_path, 'w') as f:
+            json.dump({
+                "recommender_run_name": recommender_run_name,
+                "best_model_path": "models/recommender/{}_best.pt".format(recommender_run_name)
+            }, f)
+
     if config.general.get('use_wandb', False):
         wandb.finish()
 

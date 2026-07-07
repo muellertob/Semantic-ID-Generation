@@ -124,8 +124,8 @@ def _get_codebook_size(config, default="?"):
     return getattr(model_cfg, "codebook_size", default)
 
 
-def print_evaluation_report(all_stats: dict, config) -> None:
-    """Print a structured text report to stdout."""
+def print_evaluation_report(all_stats: dict, config) -> str:
+    """Print a structured text report to stdout and return it."""
     n_layers = len(all_stats["utilisation"]["per_layer"])
     cb_size = _get_codebook_size(config, "?")
 
@@ -134,7 +134,7 @@ def print_evaluation_report(all_stats: dict, config) -> None:
         "=" * 60,
         " SEMANTIC ID EVALUATION REPORT",
         "=" * 60,
-        f"  Codebook: {n_layers} layers × {cb_size} codes",
+        "  Codebook: {} layers x {} codes".format(n_layers, cb_size),
         "",
         "── Codebook Utilisation ──────────────────────────────────",
         "   Perplexity = exp(-∑ p_k log p_k),  range: [1, K]",
@@ -146,14 +146,16 @@ def print_evaluation_report(all_stats: dict, config) -> None:
     lines += [
         "",
         "── Collision Stats ───────────────────────────────────────",
-        f"  Collision rate : {c['collision_rate']:.1%}  ({c['n_collisions']} items)",
-        f"  Max depth      : {c['max_depth']}",
-        f"  Mean / Median  : {c['mean_depth']:.2f} / {c['median_depth']:.1f}",
-        f"  p90 / p99      : {c['p90_depth']:.1f} / {c['p99_depth']:.1f}",
+        "  Collision rate : {:.1%}  ({} items)".format(c['collision_rate'], c['n_collisions']),
+        "  Max depth      : {}".format(c['max_depth']),
+        "  Mean / Median  : {:.2f} / {:.1f}".format(c['mean_depth'], c['median_depth']),
+        "  p90 / p99      : {:.1f} / {:.1f}".format(c['p90_depth'], c['p99_depth']),
         "=" * 60,
         "",
     ]
-    print("\n".join(lines))
+    report_str = "\n".join(lines)
+    print(report_str)
+    return report_str
 
 
 def evaluate_semids(raw_semids: torch.Tensor, config) -> dict:
@@ -169,7 +171,7 @@ def evaluate_semids(raw_semids: torch.Tensor, config) -> dict:
         config      : OmegaConf config object.
 
     Returns:
-        dict with keys: utilisation, collision.
+        dict with keys: utilisation, collision, report_text.
     """
     cb_size = _get_codebook_size(config, 128)
 
@@ -178,6 +180,7 @@ def evaluate_semids(raw_semids: torch.Tensor, config) -> dict:
         "collision":   compute_collision_stats(raw_semids),
     }
 
-    print_evaluation_report(all_stats, config)
+    report_text = print_evaluation_report(all_stats, config)
+    all_stats["report_text"] = report_text
 
     return all_stats
