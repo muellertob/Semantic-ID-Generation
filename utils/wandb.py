@@ -8,16 +8,24 @@ from utils.model_id_generation import generate_model_id
 logger = logging.getLogger(__name__)
 
 
-def wandb_init(config, project: str):
+def wandb_init(config, project: str, run_name: str = None, group: str = None, job_type: str = None, tags: list = None):
     """
     Initialise a WandB run.
 
     Args:
-        config  : OmegaConf config object.
-        project : WandB project name (caller decides which stage project to use).
+        config   : OmegaConf config object.
+        project  : WandB project name (caller decides which stage project to use).
+        run_name : Optional custom run name.
+        group    : Optional custom group name.
+        job_type : Optional custom job type name.
+        tags     : Optional list of tags.
     """
     wandb.init(
         project=project,
+        name=run_name,
+        group=group,
+        job_type=job_type,
+        tags=tags,
         entity=config.general.wandb_entity,
         config=OmegaConf.to_container(config, resolve=True),
         resume="never",

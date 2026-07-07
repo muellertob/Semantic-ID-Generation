@@ -79,6 +79,8 @@ def run_training(config_path: str | None, _config_override=None, overrides=None)
         "semantic_ids": sem_ids,
         "config": config,
         "num_items": len(embeddings),
+        "parent_quantizer_run_id": None,
+        "sid_type": "RQ_KMeans"
     }, output_path)
     logger.info(f"Semantic IDs saved to: {output_path}")
 

@@ -30,6 +30,7 @@ train:
 # additional configuration
 general:
   seed: 10
+  sid_type: "R-FSQ_1MLP_LowDim"
   use_wandb: True
   wandb_log_artifacts: False
   wandb_project_quantizer: "mt-amazon-quantizer"

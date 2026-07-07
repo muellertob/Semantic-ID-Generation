@@ -18,6 +18,16 @@ def load_trained_model(model_path, config, device, input_dim):
         normalize = config.model.normalize_inputs
     else:
         normalize = True
+        
+    checkpoint = torch.load(model_path, map_location=device)
+    if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+        state_dict = checkpoint['model_state_dict']
+        wandb_run_id = checkpoint.get('wandb_run_id', None)
+        wandb_run_url = checkpoint.get('wandb_run_url', None)
+    else:
+        state_dict = checkpoint
+        wandb_run_id = None
+        wandb_run_url = None
     
     if quantizer_type == 'rqvae':
         from modules.rqvae.model import RQ_VAE
@@ -30,7 +40,7 @@ def load_trained_model(model_path, config, device, input_dim):
             commitment_weight=config.model.commitment_weight,
             normalize=normalize
         )
-        model.load_state_dict(torch.load(model_path, map_location=device), strict=False)
+        model.load_state_dict(state_dict, strict=False)
         model.to(device)
         model.eval()
         
@@ -52,7 +62,7 @@ def load_trained_model(model_path, config, device, input_dim):
             projection_type=projection_type,
             inner_dim=inner_dim
         )
-        model.load_state_dict(torch.load(model_path, map_location=device), strict=False)
+        model.load_state_dict(state_dict, strict=False)
         model.to(device)
         model.eval()
     elif quantizer_type == 'fsq':
@@ -70,13 +80,13 @@ def load_trained_model(model_path, config, device, input_dim):
             projection_type=projection_type,
             inner_dim=inner_dim
         )
-        model.load_state_dict(torch.load(model_path, map_location=device), strict=False)
+        model.load_state_dict(state_dict, strict=False)
         model.to(device)
         model.eval()
     else:
         raise ValueError(f"Unknown quantizer_type: {quantizer_type}")
         
-    return model
+    return model, wandb_run_id, wandb_run_url
 
 def generate_all_semids(model, data, device, batch_size=64):
     """Generate semantic IDs for all items in the dataset."""
@@ -164,7 +174,7 @@ def run_generation(config_path, model_path, output_path, batch_size=64, run_eval
     
     # load trained model
     logger.info(f"Loading model from: {model_path}")
-    model = load_trained_model(model_path, config, device, data.shape[1])
+    model, wandb_run_id, wandb_run_url = load_trained_model(model_path, config, device, data.shape[1])
     
     # generate semantic IDs
     logger.info("Generating semantic IDs...")
@@ -195,7 +205,10 @@ def run_generation(config_path, model_path, output_path, batch_size=64, run_eval
     torch.save({
         'semantic_ids': final_semids,
         'config': config,
-        'num_items': len(data)
+        'num_items': len(data),
+        'parent_quantizer_run_id': wandb_run_id,
+        'parent_quantizer_run_url': wandb_run_url,
+        'sid_type': config.general.get('sid_type', 'Unknown')
     }, output_path)
     logger.info(f"Semantic IDs saved to: {output_path}")
     

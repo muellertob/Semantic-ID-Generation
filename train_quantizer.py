@@ -343,9 +343,18 @@ def run_training(config_path, overrides=None):
     )
 
     # save model
-    os.makedirs(f"models/{quantizer_type}", exist_ok=True)
-    model_path = f"models/{quantizer_type}/{model_id}.pt"
-    torch.save(model.state_dict(), model_path)
+    if config.general.get('model_path', None):
+        model_path = config.general.model_path
+        os.makedirs(os.path.dirname(model_path), exist_ok=True)
+    else:
+        os.makedirs(f"models/{quantizer_type}", exist_ok=True)
+        model_path = f"models/{quantizer_type}/{model_id}.pt"
+    checkpoint = {
+        'model_state_dict': model.state_dict(),
+        'wandb_run_id': wandb.run.id if (config.general.use_wandb and wandb.run is not None) else None,
+        'wandb_run_url': wandb.run.url if (config.general.use_wandb and wandb.run is not None) else None
+    }
+    torch.save(checkpoint, model_path)
     logger.info(f"Training completed. Final results: {train_results[-1]}")
     logger.info(f"Model saved to: {model_path}")
 

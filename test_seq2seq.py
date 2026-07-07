@@ -40,6 +40,16 @@ def run_testing(config_path, semantic_ids_path, model_path, overrides=None):
     semantic_ids = semids_data['semantic_ids'] # [num_items, codebook_layers]
     
     logger.info(f"Loaded Semantic IDs with shape: {semantic_ids.shape}")
+    
+    # Auto-extract sid_type from metadata, fallback to config general.sid_type
+    if 'sid_type' in semids_data:
+        extracted_sid_type = semids_data['sid_type']
+    elif 'config' in semids_data and semids_data['config'].general.get('sid_type', None):
+        extracted_sid_type = semids_data['config'].general.sid_type
+    else:
+        extracted_sid_type = "Unknown"
+        
+    logger.info(f"Resolved Semantic ID Type: {extracted_sid_type}")
  
     # load sequential data
     logger.info("Loading User History Data (Test Split)...")

@@ -8,6 +8,7 @@ from tqdm import tqdm
 import wandb
 import os
 from functools import partial
+import uuid
 
 from modules.recommender import TigerSeq2Seq
 from data.loader import load_amazon_sequences
@@ -131,16 +132,7 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
     
     logger.info(f"Using device: {device}")
     
-    # initialize wandb
-    if config.general.get('use_wandb', False):
-        wandb_init(config, project=config.general.wandb_project_recommender)
-
-    # use WandB run name as base model ID; fall back to a generated model ID.
-    _fallback_id = generate_model_id(config)
-    recommender_run_name = get_run_name(fallback=_fallback_id)
-    logger.info(f"Recommender run name: {recommender_run_name}")
-        
-    # load semantic IDs
+    # load semantic IDs first to get lineage info
     logger.info(f"Loading Semantic IDs from {semantic_ids_path}")
     if not os.path.exists(semantic_ids_path):
         raise FileNotFoundError(f"Semantic IDs file not found at {semantic_ids_path}")
@@ -149,6 +141,56 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
     semantic_ids = semids_data['semantic_ids'] # [num_items, codebook_layers]
     
     logger.info(f"Loaded Semantic IDs with shape: {semantic_ids.shape}")
+    parent_run_id = semids_data.get('parent_quantizer_run_id', None)
+    parent_url = semids_data.get('parent_quantizer_run_url', None)
+
+    # auto-extract sid_type from metadata, fallback to config general.sid_type
+    if 'sid_type' in semids_data:
+        extracted_sid_type = semids_data['sid_type']
+    elif 'config' in semids_data and semids_data['config'].general.get('sid_type', None):
+        extracted_sid_type = semids_data['config'].general.sid_type
+    else:
+        extracted_sid_type = "Unknown"
+
+    # generate recommender run names (local checkpoint is static, WandB is unique)
+    short_id = str(uuid.uuid4())[:8]
+    if extracted_sid_type:
+        recommender_run_name = f"{extracted_sid_type}_seed_{seed}"
+        recommender_run_name_wandb = f"{extracted_sid_type}-seed-{seed}-{short_id}"
+        group_name = extracted_sid_type
+        tags = [extracted_sid_type, f"seed-{seed}"]
+    else:
+        recommender_run_name = generate_model_id(config)
+        recommender_run_name_wandb = f"{recommender_run_name}-{short_id}"
+        group_name = None
+        tags = None
+        
+    # initialize wandb with full details and tracking overrides
+    if config.general.get('use_wandb', False):
+        if parent_run_id:
+            OmegaConf.set_struct(config, False)
+            config.general.parent_quantizer_run_id = parent_run_id
+            OmegaConf.set_struct(config, True)
+            
+        wandb_init(
+            config, 
+            project=config.general.wandb_project_recommender, 
+            run_name=recommender_run_name_wandb,
+            group=group_name,
+            job_type="seq2seq-train",
+            tags=tags
+        )
+        
+        if parent_url:
+            wandb.summary["parent_quantizer_url"] = parent_url
+            logger.info(f"🔗 Linked to parent quantizer run: {parent_url}")
+        elif parent_run_id:
+            fallback_project = config.general.get('wandb_project_quantizer', 'mt-amazon-quantizer')
+            parent_url = f"https://wandb.ai/{wandb.run.entity}/{fallback_project}/runs/{parent_run_id}"
+            wandb.summary["parent_quantizer_url"] = parent_url
+            logger.info(f"🔗 Linked to parent quantizer run (constructed): {parent_url}")
+
+    logger.info(f"Recommender run name: {recommender_run_name}")
 
     # load sequential data
     logger.info("Loading User History Data...")
