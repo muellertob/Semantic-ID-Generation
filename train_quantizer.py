@@ -317,7 +317,7 @@ def run_training(config_path, overrides=None):
         "lr": config.train.learning_rate,
         "weight_decay": config.train.weight_decay
     }
-    if is_cuda and torch.__version__ >= '2.0' and optimizer_type in ('adamw', 'adam', 'adagrad'):
+    if is_cuda and torch.__version__ >= '2.12' and optimizer_type in ('adamw', 'adam', 'adagrad'):
         optimizer_args["fused"] = True
         logger.info(f"Using fused {optimizer_type} optimizer")
 
