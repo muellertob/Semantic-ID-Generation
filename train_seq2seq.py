@@ -380,12 +380,8 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
                 return 1.0
             return (warmup_steps / step) ** 0.5
             
-        scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=inverse_sqrt_lambda)
-        
-        # fast-forward scheduler if resuming
-        if global_step > 0:
-            for _ in range(global_step):
-                scheduler.step()
+        last_epoch = global_step - 1 if global_step > 0 else -1
+        scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=inverse_sqrt_lambda, last_epoch=last_epoch)
     else:
         scheduler = None
     
