@@ -38,6 +38,7 @@ seq2seq:
 # additional configuration
 general:
   seed: 10
+  compile: True
   use_wandb: True
   wandb_log_artifacts: False
   wandb_project_recommender: "mt-amazon-recommender"
