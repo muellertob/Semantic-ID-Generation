@@ -312,6 +312,17 @@ def run_training(config_path, overrides=None):
     data = load_data(config, split=data_split)
     model = create_model(config, data.shape[1])
     model.to(device)
+    
+    # compile the model
+    if config.general.get('compile', False):
+        if device.type == 'mps':
+            logger.warning("torch.compile is not stably supported on MPS (Apple Silicon). Skipping compilation and running in eager mode.")
+        else:
+            logger.info("Compiling quantizer model using torch.compile...")
+            try:
+                model = torch.compile(model)
+            except Exception as e:
+                logger.warning(f"Failed to compile model. Falling back to eager mode. Error: {e}")
 
     # setup optimizer
     is_cuda = (device.type == 'cuda')

@@ -292,6 +292,18 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
     # register the codebooks for constrained generation
     model.set_codebooks(semantic_ids.to(device))
     
+    # compile the model
+    if config.general.get('compile', False):
+        if device.type == 'mps':
+            logger.warning("torch.compile is not stably supported on MPS (Apple Silicon). Skipping compilation and running in eager mode.")
+        else:
+            logger.info("Compiling Seq2Seq model using torch.compile(dynamic=True)...")
+            try:
+                # dynamic=True prevents recompilation when user history lengths vary
+                model = torch.compile(model, dynamic=True)
+            except Exception as e:
+                logger.warning(f"Failed to compile model. Falling back to eager mode. Error: {e}")
+    
     if config.general.get('use_wandb', False):
         wandb.watch(model, log="all")
 
