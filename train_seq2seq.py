@@ -129,7 +129,11 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
     
     resume_optimizer = config.seq2seq.get('resume_optimizer', True)
     early_stopping = config.seq2seq.get('early_stopping', True)
-    device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
+    device_str = config.general.get('device', None)
+    if device_str is not None:
+        device = torch.device(device_str)
+    else:
+        device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
     is_cuda = (device.type == 'cuda')
     
     logger.info(f"Using device: {device}")

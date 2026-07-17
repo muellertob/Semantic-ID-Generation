@@ -167,7 +167,11 @@ def run_generation(config_path, model_path, output_path, batch_size=64, run_eval
     if generation_config:
         batch_size = generation_config.get('batch_size', batch_size)
         
-    device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
+    device_str = config.general.get('device', None)
+    if device_str is not None:
+        device = torch.device(device_str)
+    else:
+        device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
     logger.info(f"Using device: {device}")
     
     # load all items data

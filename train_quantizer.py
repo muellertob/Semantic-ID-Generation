@@ -285,7 +285,11 @@ def run_training(config_path, overrides=None):
     logger.info(f"Configuration:\n{OmegaConf.to_yaml(config)}")
     seed = config.general.get('seed', 42)
     set_seed(seed)
-    device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
+    device_str = config.general.get('device', None)
+    if device_str is not None:
+        device = torch.device(device_str)
+    else:
+        device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
     model_id = generate_model_id(config)
     quantizer_type = config.model.quantizer_type
     

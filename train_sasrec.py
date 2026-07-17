@@ -93,11 +93,11 @@ def run_training(config_path, resume_path=None, overrides=None):
     
     logging.basicConfig(level=logging.INFO)
 
-    device = torch.device(
-        "cuda" if torch.cuda.is_available()
-        else "mps" if torch.backends.mps.is_available()
-        else "cpu"
-    )
+    device_str = config.general.get('device', None)
+    if device_str is not None:
+        device = torch.device(device_str)
+    else:
+        device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
     logger.info(f"Using device: {device}")
 
     # config values

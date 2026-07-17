@@ -29,7 +29,11 @@ def run_testing(config_path, semantic_ids_path, model_path, overrides=None):
     set_seed(seed)
         
     logger.info(f"Configuration:\n{OmegaConf.to_yaml(config)}")
-    device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
+    device_str = config.general.get('device', None)
+    if device_str is not None:
+        device = torch.device(device_str)
+    else:
+        device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
     
     logger.info(f"Using device: {device}")
     
