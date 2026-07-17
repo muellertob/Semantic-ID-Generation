@@ -332,18 +332,31 @@ def run_training(config_path, overrides=None):
         "lr": config.train.learning_rate,
         "weight_decay": config.train.weight_decay
     }
-    if is_cuda and torch.__version__ >= '2.12' and optimizer_type in ('adamw', 'adam', 'adagrad'):
+    if is_cuda and optimizer_type in ('adamw', 'adam', 'adagrad'):
         optimizer_args["fused"] = True
         logger.info(f"Using fused {optimizer_type} optimizer")
 
-    if optimizer_type == 'adamw':
-        optimizer = optim.AdamW(model.parameters(), **optimizer_args)
-    elif optimizer_type == 'adagrad':
-        optimizer = optim.Adagrad(model.parameters(), **optimizer_args)
-    elif optimizer_type == 'adam':
-        optimizer = optim.Adam(model.parameters(), **optimizer_args)
-    else:
-        raise ValueError(f"Unknown optimizer: {optimizer_type}")
+    try:
+        if optimizer_type == 'adamw':
+            optimizer = optim.AdamW(model.parameters(), **optimizer_args)
+        elif optimizer_type == 'adagrad':
+            optimizer = optim.Adagrad(model.parameters(), **optimizer_args)
+        elif optimizer_type == 'adam':
+            optimizer = optim.Adam(model.parameters(), **optimizer_args)
+        else:
+            raise ValueError(f"Unknown optimizer: {optimizer_type}")
+    except Exception as e:
+        if "fused" in optimizer_args:
+            logger.warning(f"Failed to initialize fused {optimizer_type} optimizer. Falling back to non-fused version. Error: {e}")
+            optimizer_args.pop("fused")
+            if optimizer_type == 'adamw':
+                optimizer = optim.AdamW(model.parameters(), **optimizer_args)
+            elif optimizer_type == 'adagrad':
+                optimizer = optim.Adagrad(model.parameters(), **optimizer_args)
+            elif optimizer_type == 'adam':
+                optimizer = optim.Adam(model.parameters(), **optimizer_args)
+        else:
+            raise e
 
     # watch model with wandb if enabled
     if config.general.use_wandb:

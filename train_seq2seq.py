@@ -312,11 +312,19 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
         "lr": config.seq2seq.get('learning_rate', 1e-3),
         "weight_decay": config.seq2seq.get('weight_decay', 0.0001)
     }
-    if is_cuda and torch.__version__ >= '2.0':
+    if is_cuda:
         optimizer_args["fused"] = True
         logger.info("Using fused Adam optimizer")
         
-    optimizer = optim.Adam(model.parameters(), **optimizer_args)
+    try:
+        optimizer = optim.Adam(model.parameters(), **optimizer_args)
+    except Exception as e:
+        if "fused" in optimizer_args:
+            logger.warning(f"Failed to initialize fused Adam optimizer. Falling back to non-fused version. Error: {e}")
+            optimizer_args.pop("fused")
+            optimizer = optim.Adam(model.parameters(), **optimizer_args)
+        else:
+            raise e
     
     start_epoch = 0
     global_step = 0
