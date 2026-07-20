@@ -1,3 +1,56 @@
+[project]
+name = "semantic-id-generation"
+version = "0.1.0"
+description = "Semantic ID Generation for Recommender Systems"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "torch==2.12.*",
+    "torchvision",
+    "torch-geometric",
+    "sentence-transformers",
+    "transformers",
+    "tokenizers",
+    "torchmetrics",
+    "numpy",
+    "pandas",
+    "polars",
+    "scikit-learn",
+    "scipy",
+    "pyarrow",
+    "einops",
+    "hyperopt",
+    "tqdm",
+    "python-dotenv",
+    "hydra-core",
+    "omegaconf",
+    "pyyaml",
+    "wandb",
+    "pytest",
+    "jupyter",
+    "ipykernel",
+    "matplotlib",
+    "seaborn",
+    "marimo",
+    "plotly",
+]
+
+# Define the official PyTorch CUDA index for Linux
+[[tool.uv.index]]
+name = "pytorch"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+# Route dependencies depending on the platform (macOS vs Linux)
+[tool.uv.sources]
+torch = [
+    { index = "pytorch", marker = "sys_platform == 'linux'" }
+]
+torchvision = [
+    { index = "pytorch", marker = "sys_platform == 'linux'" }
+]
+
+# pytest configuration
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
