@@ -114,10 +114,14 @@ def run_testing(config_path, semantic_ids_path, model_path, overrides=None):
         raise FileNotFoundError(f"Model file not found at {model_path}")
         
     checkpoint = torch.load(model_path, map_location=device)
-    if 'model_state_dict' in checkpoint:
-        model.load_state_dict(checkpoint['model_state_dict'])
-    else:
-        model.load_state_dict(checkpoint)
+    state_dict = checkpoint['model_state_dict'] if 'model_state_dict' in checkpoint else checkpoint
+    
+    # strip "_orig_mod." prefix if the model was compiled during training but is being loaded into a raw model
+    if any(k.startswith('_orig_mod.') for k in state_dict.keys()):
+        logger.info("Stripping '_orig_mod.' prefix from saved state dict keys...")
+        state_dict = {k.replace('_orig_mod.', ''): v for k, v in state_dict.items()}
+        
+    model.load_state_dict(state_dict)
         
     logger.info("Starting Evaluation on Test Set...")
 

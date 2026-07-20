@@ -29,6 +29,9 @@ def load_trained_model(model_path, config, device, input_dim):
         state_dict = checkpoint
         wandb_run_id = None
         wandb_run_url = None
+        
+    if isinstance(state_dict, dict) and any(k.startswith('_orig_mod.') for k in state_dict.keys()):
+        state_dict = {k.replace('_orig_mod.', ''): v for k, v in state_dict.items()}
     
     if quantizer_type == 'rqvae':
         from modules.rqvae.model import RQ_VAE

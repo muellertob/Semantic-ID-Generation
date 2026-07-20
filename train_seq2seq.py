@@ -28,9 +28,10 @@ if torch.cuda.is_available():
     torch.backends.cudnn.allow_tf32 = True
 
 def save_checkpoint(model, optimizer, scheduler, scaler, epoch, metric_val, path, metric_name="recall@5"):
+    raw_model = getattr(model, '_orig_mod', model)
     torch.save({
         'epoch': epoch,
-        'model_state_dict': model.state_dict(),
+        'model_state_dict': raw_model.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
         'scheduler_state_dict': scheduler.state_dict() if scheduler else None,
         'scaler_state_dict': scaler.state_dict() if scaler else None,
@@ -339,7 +340,13 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
             raise FileNotFoundError(f"Checkpoint file not found at {resume_path}")
             
         checkpoint = torch.load(resume_path, map_location=device, weights_only=False)
-        model.load_state_dict(checkpoint['model_state_dict'])
+        state_dict = checkpoint['model_state_dict']
+        if any(k.startswith('_orig_mod.') for k in state_dict.keys()):
+            logger.info("Stripping '_orig_mod.' prefix from saved state dict keys...")
+            state_dict = {k.replace('_orig_mod.', ''): v for k, v in state_dict.items()}
+            
+        raw_model = getattr(model, '_orig_mod', model)
+        raw_model.load_state_dict(state_dict)
         if resume_optimizer:
             optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         if 'scaler_state_dict' in checkpoint and checkpoint['scaler_state_dict'] is not None:

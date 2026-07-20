@@ -379,8 +379,9 @@ def run_training(config_path, overrides=None):
     else:
         os.makedirs(f"models/{quantizer_type}", exist_ok=True)
         model_path = f"models/{quantizer_type}/{model_id}.pt"
+    raw_model = getattr(model, '_orig_mod', model)
     checkpoint = {
-        'model_state_dict': model.state_dict(),
+        'model_state_dict': raw_model.state_dict(),
         'wandb_run_id': wandb.run.id if (config.general.use_wandb and wandb.run is not None) else None,
         'wandb_run_url': wandb.run.url if (config.general.use_wandb and wandb.run is not None) else None
     }
