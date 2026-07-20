@@ -1,16 +1,11 @@
 name: semantic-id-generation
 channels:
-  - conda-forge  # Fallback for other libraries (Polars, Transformers, etc.)
+  - conda-forge
   - defaults
 dependencies:
   # Core Python
   - python=3.11
   - pip
-  
-  # PyTorch
-  - pytorch=2.12 # supports fused adagrad on CUDA and fixes gumbel_softmax on MPS
-  - torchvision
-  - pytorch_geometric
   
 # Data Science & Processing
   - numpy
@@ -48,3 +43,9 @@ dependencies:
   - seaborn
   - marimo
   - plotly
+
+  # Install PyTorch and related packages via pip for official wheels & cross-platform support
+  - pip:
+      - torch==2.12.*
+      - torchvision
+      - torch-geometric
