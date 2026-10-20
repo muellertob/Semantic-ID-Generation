@@ -63,7 +63,8 @@ All main workflows are orchestrated via `main.py`. Any config parameter can be o
   python run_experiments.py --seeds 42,7,99 [--gpu-main N] [--gpu-quantizer N] [--no-parallel] [--dry-run] [--outputs-dir outputs] [--models-dir models] [--reuse-semids <outputs folder>]
   ```
   `--reuse-semids` skips Stage 1 and trains Stage 2 on an earlier run's SIDs (copies its `semids.pt` and quantizer/generate meta JSONs into `--outputs-dir`, which must differ). Subprocesses call `python`, so run it inside the project environment.
-  Writes per-run `*_meta.json`, configs and logs under `<outputs-dir>/experiments/`, SIDs under `<outputs-dir>/<variant>_seed_<s>/`, W&B runs under `<outputs-dir>/wandb/runs/`, and checkpoints under `<models-dir>/{quantizer,rqkmeans,recommender}/` (defaults `outputs`, `models`; use a fresh pair such as `outputs_toys_v2`, `models_toys_v2` so a new run cannot overwrite old results). Report and thesis numbers are aggregated by `../analysis/scripts/aggregate.py` from `outputs_*/experiments/*_meta.json`.
+  Writes per-run `*_meta.json`, configs and logs under `<outputs-dir>/experiments/`, SIDs under `<outputs-dir>/<variant>_seed_<s>/`, W&B runs under `<outputs-dir>/wandb/runs/`, and checkpoints under `<models-dir>/{quantizer,rqkmeans,recommender}/` (defaults `outputs`, `models`; use a fresh pair such as `outputs_toys_v2_100k`, `models_toys_v2_100k` so a new run cannot overwrite old results). Report and thesis numbers are aggregated by `../analysis/scripts/aggregate.py` from `outputs_*/experiments/*_meta.json`.
+  Server procedure (sync, launch in tmux, monitor, restart caveats: `run_experiments.py` has no skip-finished logic): `../knowledge/runbooks/server_experiments.md`.
 * **Evaluate Naive Baselines:**
   ```bash
   python test_naive_baselines.py --config config/<config_file>.yaml --semids outputs/semids.pt
