@@ -139,6 +139,20 @@ def set_output_dirs(outputs_dir, models_dir):
 
 set_output_dirs("outputs", "models")
 
+# copies an earlier run's semids.pt and Stage-1 meta JSONs into OUTPUTS_DIR, so Stage 2 runs on the same SIDs
+def reuse_stage1_outputs(reuse_dir, exp_name, seed, semids_output_path):
+    src_semids = os.path.join(reuse_dir, f"{exp_name.lower()}_seed_{seed}", "semids.pt")
+    shutil.copy2(src_semids, semids_output_path)
+    log_msg(f"Reusing Semantic IDs from {src_semids}")
+    sid_report_text = ""
+    for kind in ["quantizer", "generate"]:
+        src_meta = os.path.join(reuse_dir, "experiments", f"{exp_name.lower()}_seed_{seed}_{kind}_meta.json")
+        if os.path.exists(src_meta):
+            shutil.copy2(src_meta, EXPERIMENT_DIR)
+            with open(src_meta, "r") as f:
+                sid_report_text = json.load(f).get("sid_report", "") or sid_report_text
+    return sid_report_text
+
 # helper to log messages both to run.log and stdout
 def log_msg(message):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -278,7 +292,12 @@ def main():
     parser.add_argument("--no-parallel", action="store_true", help="Disable parallel background quantizer training")
     parser.add_argument("--outputs-dir", type=str, default="outputs", help="Folder for SIDs, experiment results, run configs and W&B runs (e.g. outputs_toys_v2)")
     parser.add_argument("--models-dir", type=str, default="models", help="Folder for quantizer and recommender checkpoints (e.g. models_toys_v2)")
+    parser.add_argument("--reuse-semids", type=str, default=None, help="Skip Stage 1 and train Stage 2 on the SIDs of an earlier run's outputs folder (e.g. outputs_toys); its semids.pt and quantizer/generate meta JSONs are copied into --outputs-dir")
     args = parser.parse_args()
+    
+    reuse_dir = args.reuse_semids
+    if reuse_dir is not None and os.path.abspath(reuse_dir) == os.path.abspath(args.outputs_dir):
+        parser.error("--reuse-semids must differ from --outputs-dir, otherwise the earlier run's files would be overwritten")
     
     set_output_dirs(args.outputs_dir, args.models_dir)
     
@@ -289,7 +308,7 @@ def main():
     dry_run = args.dry_run
     seeds = [int(s.strip()) for s in args.seeds.split(",") if s.strip() != ""]
     gpu_quant = args.gpu_quantizer
-    parallel = not args.no_parallel
+    parallel = not args.no_parallel and reuse_dir is None
     
     # Previous Amazon Beauty Experiments (commented out for reference)
     # beauty_experiments = [
@@ -333,49 +352,57 @@ def main():
     # ]
 
     # Amazon Toys Experiments
+    # Stage 2 with TIGER's 100k-step budget and no early stopping (*_100k.yaml); the reported Toys runs used
+    # amazon_toy_grid.yaml / amazon_toy_grid_fsq.yaml (early stopping, patience 15)
     experiments = [
         {
             "name": "RQ_KMeans",
             "quant_config": "config/rq-kmeans/amazon_toy_rqkmeans.yaml",
-            "recommender_config": "config/recommender/amazon_toy_grid.yaml",
+            "recommender_config": "config/recommender/amazon_toy_grid_100k.yaml",
             "is_rqkmeans": True,
             "codebook_size": 256,
         },
         {
             "name": "FSQ",
             "quant_config": "config/fsq/amazon_toy.yaml",
-            "recommender_config": "config/recommender/amazon_toy_grid_fsq.yaml",
+            "recommender_config": "config/recommender/amazon_toy_grid_fsq_100k.yaml",
             "codebook_size": 288,
         },
         {
             "name": "Residual_FSQ_Simple_HighDim",
             "quant_config": "config/fsq/amazon_toy_rfsq_simple_highdim.yaml",
-            "recommender_config": "config/recommender/amazon_toy_grid_fsq.yaml",
+            "recommender_config": "config/recommender/amazon_toy_grid_fsq_100k.yaml",
             "codebook_size": 288,
         },
         {
             "name": "Residual_FSQ_Simple_LowDim",
             "quant_config": "config/fsq/amazon_toy_rfsq_simple_lowdim.yaml",
-            "recommender_config": "config/recommender/amazon_toy_grid_fsq.yaml",
+            "recommender_config": "config/recommender/amazon_toy_grid_fsq_100k.yaml",
             "codebook_size": 288,
         },
         {
             "name": "Residual_FSQ_Complex",
             "quant_config": "config/fsq/amazon_toy_rfsq_complex.yaml",
-            "recommender_config": "config/recommender/amazon_toy_grid_fsq.yaml",
+            "recommender_config": "config/recommender/amazon_toy_grid_fsq_100k.yaml",
             "codebook_size": 288,
         },
         {
             "name": "RQ_VAE",
             "quant_config": "config/rq-vae/amazon_toy_tiger.yaml",
-            "recommender_config": "config/recommender/amazon_toy_grid.yaml",
+            "recommender_config": "config/recommender/amazon_toy_grid_100k.yaml",
             "codebook_size": 256,
         }
     ]
     
+    if reuse_dir is not None:
+        missing = [os.path.join(reuse_dir, f"{exp['name'].lower()}_seed_{seed}", "semids.pt") for exp in experiments for seed in seeds]
+        missing = [p for p in missing if not os.path.exists(p)]
+        if missing:
+            raise FileNotFoundError(f"--reuse-semids: missing Semantic IDs: {missing}")
+    
     init_report_files()
     
-    log_msg(f"Starting experiments run. Seeds = {seeds}, Dry run = {dry_run}, Parallel = {parallel}")
+    log_msg(f"Starting experiments run. Seeds = {seeds}, Dry run = {dry_run}, Parallel = {parallel}, Reuse SIDs from = {reuse_dir}")
     
     # Flatten experiments and seeds into a sequence of pipeline tasks
     tasks = []
@@ -422,8 +449,14 @@ def main():
             
             sid_report_text = ""
             
+            # Stage 1 skipped: reuse the SIDs of an earlier run
+            if reuse_dir is not None:
+                sid_report_text = reuse_stage1_outputs(reuse_dir, exp_name, seed, semids_output_path)
+                if sid_report_text:
+                    append_sid_report(f"{exp_name} (seed {seed}, reused from {reuse_dir})", sid_report_text)
+            
             # Check if this task's quantizer was already started in the background
-            if bg_proc is not None and bg_task_idx == j:
+            elif bg_proc is not None and bg_task_idx == j:
                 log_msg(f"Waiting for background quantizer training of Task {j+1} ({exp_name}, seed {seed}) to complete...")
                 bg_proc.wait()
                 if bg_log_file:
@@ -460,8 +493,8 @@ def main():
                     if exp.get("is_rqkmeans") and sid_report_text:
                         append_sid_report(f"{exp_name} (seed {seed})", sid_report_text)
             
-            # Step 2: Generate Semantic IDs (if not RQ-KMeans, which creates them directly)
-            if not exp.get("is_rqkmeans"):
+            # Step 2: Generate Semantic IDs (if not RQ-KMeans, which creates them directly, or reused)
+            if not exp.get("is_rqkmeans") and reuse_dir is None:
                 if not quantizer_model_path:
                     quantizer_model_path = os.path.join(MODELS_DIR, "quantizer", f"{exp_name.lower()}_seed_{seed}.pt")
                     
