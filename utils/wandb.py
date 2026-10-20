@@ -20,6 +20,8 @@ def wandb_init(config, project: str, run_name: str = None, group: str = None, jo
         job_type : Optional custom job type name.
         tags     : Optional list of tags.
     """
+    wandb_dir = config.general.get("wandb_dir", os.path.join("outputs", "wandb", "runs"))
+    os.makedirs(wandb_dir, exist_ok=True)
     wandb.init(
         project=project,
         name=run_name,
@@ -29,7 +31,7 @@ def wandb_init(config, project: str, run_name: str = None, group: str = None, jo
         entity=config.general.wandb_entity,
         config=OmegaConf.to_container(config, resolve=True),
         resume="never",
-        dir=os.path.join("outputs", "wandb", "runs"),
+        dir=wandb_dir,
     )
 
 

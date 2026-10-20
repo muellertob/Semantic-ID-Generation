@@ -60,9 +60,9 @@ All main workflows are orchestrated via `main.py`. Any config parameter can be o
 ### 2. Other Executable Scripts
 * **Multi-seed experiments (quantizer → SIDs → TIGER, several seeds):**
   ```bash
-  python run_experiments.py --seeds 42,7,99 [--gpu-main N] [--gpu-quantizer N] [--no-parallel] [--dry-run]
+  python run_experiments.py --seeds 42,7,99 [--gpu-main N] [--gpu-quantizer N] [--no-parallel] [--dry-run] [--outputs-dir outputs] [--models-dir models]
   ```
-  Writes per-run `*_meta.json`, configs and logs under `outputs/experiments/`. Report and thesis numbers are aggregated by `../analysis/scripts/aggregate.py` from `outputs_*/experiments/*_meta.json`.
+  Writes per-run `*_meta.json`, configs and logs under `<outputs-dir>/experiments/`, SIDs under `<outputs-dir>/<variant>_seed_<s>/`, W&B runs under `<outputs-dir>/wandb/runs/`, and checkpoints under `<models-dir>/{quantizer,rqkmeans,recommender}/` (defaults `outputs`, `models`; use a fresh pair such as `outputs_toys_v2`, `models_toys_v2` so a new run cannot overwrite old results). Report and thesis numbers are aggregated by `../analysis/scripts/aggregate.py` from `outputs_*/experiments/*_meta.json`.
 * **Evaluate Naive Baselines:**
   ```bash
   python test_naive_baselines.py --config config/<config_file>.yaml --semids outputs/semids.pt

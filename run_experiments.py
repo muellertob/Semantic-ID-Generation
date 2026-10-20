@@ -22,7 +22,7 @@ def prepare_run_config(config_path, dest_config_path, overrides_dict):
 # prepares config and returns command args, model/output paths for a quantizer training task
 def prepare_quantizer_task(exp, seed, dry_run):
     exp_name = exp["name"]
-    semids_output_path = f"outputs/{exp_name.lower()}_seed_{seed}/semids.pt"
+    semids_output_path = os.path.join(OUTPUTS_DIR, f"{exp_name.lower()}_seed_{seed}", "semids.pt")
     quant_meta_json = os.path.join(EXPERIMENT_DIR, f"{exp_name.lower()}_seed_{seed}_quantizer_meta.json")
     quant_run_config = os.path.join(CONFIGS_DIR, f"{exp_name}_seed_{seed}_quantizer.yaml")
     
@@ -30,8 +30,9 @@ def prepare_quantizer_task(exp, seed, dry_run):
         overrides = {
             "general.seed": seed,
             "general.output_path": semids_output_path,
-            "general.model_path": f"models/rqkmeans/{exp_name.lower()}_seed_{seed}.pt",
-            "general.meta_json": quant_meta_json
+            "general.model_path": os.path.join(MODELS_DIR, "rqkmeans", f"{exp_name.lower()}_seed_{seed}.pt"),
+            "general.meta_json": quant_meta_json,
+            "general.wandb_dir": os.path.join(OUTPUTS_DIR, "wandb", "runs"),
         }
         if dry_run:
             overrides["model.n_iters"] = 2
@@ -41,8 +42,9 @@ def prepare_quantizer_task(exp, seed, dry_run):
     else:
         overrides = {
             "general.seed": seed,
-            "general.model_path": f"models/quantizer/{exp_name.lower()}_seed_{seed}.pt",
-            "general.meta_json": quant_meta_json
+            "general.model_path": os.path.join(MODELS_DIR, "quantizer", f"{exp_name.lower()}_seed_{seed}.pt"),
+            "general.meta_json": quant_meta_json,
+            "general.wandb_dir": os.path.join(OUTPUTS_DIR, "wandb", "runs"),
         }
         if dry_run:
             overrides["train.num_epochs"] = 1
@@ -62,7 +64,9 @@ def run_recommender_task(exp, seed, semids_output_path, dry_run):
     # Train
     rec_overrides = {
         "general.seed": seed,
-        "general.meta_json": train_meta_json
+        "general.meta_json": train_meta_json,
+        "general.recommender_model_dir": os.path.join(MODELS_DIR, "recommender"),
+        "general.wandb_dir": os.path.join(OUTPUTS_DIR, "wandb", "runs"),
     }
     if dry_run:
         rec_overrides["seq2seq.num_epochs"] = 1
@@ -88,7 +92,7 @@ def run_recommender_task(exp, seed, semids_output_path, dry_run):
     if not recommender_run_name:
         recommender_run_name = f"{exp_name}_seed_{seed}"
     if not best_model_path:
-        best_model_path = f"models/recommender/{recommender_run_name}_best.pt"
+        best_model_path = os.path.join(MODELS_DIR, "recommender", f"{recommender_run_name}_best.pt")
         
     if not os.path.exists(best_model_path):
         raise FileNotFoundError(f"Expected recommender model checkpoint not found at: {best_model_path}")
@@ -121,14 +125,19 @@ def run_recommender_task(exp, seed, semids_output_path, dry_run):
         
     return recommender_run_name, metrics, hierarchical
 
-# setup directories
-EXPERIMENT_DIR = os.path.join("outputs", "experiments")
-CONFIGS_DIR = os.path.join(EXPERIMENT_DIR, "configs")
-LOG_FILE = os.path.join(EXPERIMENT_DIR, "run.log")
-SID_REPORT_FILE = os.path.join(EXPERIMENT_DIR, "sid_evaluation_reports.md")
-RETRIEVAL_REPORT_FILE = os.path.join(EXPERIMENT_DIR, "seq2seq_retrieval_performance.md")
+# setup directories (main() points them to --outputs-dir and --models-dir)
+def set_output_dirs(outputs_dir, models_dir):
+    global OUTPUTS_DIR, MODELS_DIR, EXPERIMENT_DIR, CONFIGS_DIR, LOG_FILE, SID_REPORT_FILE, RETRIEVAL_REPORT_FILE
+    OUTPUTS_DIR = outputs_dir
+    MODELS_DIR = models_dir
+    EXPERIMENT_DIR = os.path.join(OUTPUTS_DIR, "experiments")
+    CONFIGS_DIR = os.path.join(EXPERIMENT_DIR, "configs")
+    LOG_FILE = os.path.join(EXPERIMENT_DIR, "run.log")
+    SID_REPORT_FILE = os.path.join(EXPERIMENT_DIR, "sid_evaluation_reports.md")
+    RETRIEVAL_REPORT_FILE = os.path.join(EXPERIMENT_DIR, "seq2seq_retrieval_performance.md")
+    os.makedirs(CONFIGS_DIR, exist_ok=True)
 
-os.makedirs(CONFIGS_DIR, exist_ok=True)
+set_output_dirs("outputs", "models")
 
 # helper to log messages both to run.log and stdout
 def log_msg(message):
@@ -267,7 +276,11 @@ def main():
     parser.add_argument("--gpu-main", type=str, default=None, help="GPU index to use for the main tasks (recommender and active quantizer)")
     parser.add_argument("--gpu-quantizer", type=str, default=None, help="GPU index to use for background quantizer training")
     parser.add_argument("--no-parallel", action="store_true", help="Disable parallel background quantizer training")
+    parser.add_argument("--outputs-dir", type=str, default="outputs", help="Folder for SIDs, experiment results, run configs and W&B runs (e.g. outputs_toys_v2)")
+    parser.add_argument("--models-dir", type=str, default="models", help="Folder for quantizer and recommender checkpoints (e.g. models_toys_v2)")
     args = parser.parse_args()
+    
+    set_output_dirs(args.outputs_dir, args.models_dir)
     
     if args.gpu_main is not None:
         os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
@@ -404,7 +417,7 @@ def main():
         try:
             # Step 1: Secure or wait for the trained quantizer / semantic IDs
             quantizer_model_path = None
-            semids_output_path = f"outputs/{exp_name.lower()}_seed_{seed}/semids.pt"
+            semids_output_path = os.path.join(OUTPUTS_DIR, f"{exp_name.lower()}_seed_{seed}", "semids.pt")
             os.makedirs(os.path.dirname(semids_output_path), exist_ok=True)
             
             sid_report_text = ""
@@ -450,7 +463,7 @@ def main():
             # Step 2: Generate Semantic IDs (if not RQ-KMeans, which creates them directly)
             if not exp.get("is_rqkmeans"):
                 if not quantizer_model_path:
-                    quantizer_model_path = f"models/quantizer/{exp_name.lower()}_seed_{seed}.pt"
+                    quantizer_model_path = os.path.join(MODELS_DIR, "quantizer", f"{exp_name.lower()}_seed_{seed}.pt")
                     
                 if not os.path.exists(quantizer_model_path):
                     raise FileNotFoundError(f"Expected quantizer model checkpoint not found at: {quantizer_model_path}")

@@ -130,6 +130,7 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
     
     resume_optimizer = config.seq2seq.get('resume_optimizer', True)
     early_stopping = config.seq2seq.get('early_stopping', True)
+    recommender_model_dir = config.general.get('recommender_model_dir', os.path.join("models", "recommender"))
     device_str = config.general.get('device', None)
     if device_str is not None:
         device = torch.device(device_str)
@@ -467,9 +468,9 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
                 best_recall_at_5 = current_recall_at_5
                 recall_no_improve = 0 # reset patience
                 if config.general.get('save_model', True):
-                    os.makedirs("models/recommender", exist_ok=True)
+                    os.makedirs(recommender_model_dir, exist_ok=True)
                     model_id = f"{recommender_run_name}_best"
-                    save_path = f"models/recommender/{model_id}.pt"
+                    save_path = os.path.join(recommender_model_dir, f"{model_id}.pt")
                     save_checkpoint(model, optimizer, scheduler, scaler, epoch, current_recall_at_5, save_path, "recall@5")
                     logger.info(f"New best Recall@5 achieved ({current_recall_at_5:.4f})! Model saved to {save_path}")
                     log_model_artifact(
@@ -510,7 +511,7 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
         with open(meta_json_path, 'w') as f:
             json.dump({
                 "recommender_run_name": recommender_run_name,
-                "best_model_path": "models/recommender/{}_best.pt".format(recommender_run_name)
+                "best_model_path": os.path.join(recommender_model_dir, f"{recommender_run_name}_best.pt")
             }, f)
 
     if config.general.get('use_wandb', False):
