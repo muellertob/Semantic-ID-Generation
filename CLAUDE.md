@@ -58,6 +58,11 @@ All main workflows are orchestrated via `main.py`. Any config parameter can be o
   ```
 
 ### 2. Other Executable Scripts
+* **Multi-seed experiments (quantizer → SIDs → TIGER, several seeds):**
+  ```bash
+  python run_experiments.py --seeds 42,7,99 [--gpu-main N] [--gpu-quantizer N] [--no-parallel] [--dry-run]
+  ```
+  Writes per-run `*_meta.json`, configs and logs under `outputs/experiments/`. Report and thesis numbers are aggregated by `../analysis/scripts/aggregate.py` from `outputs_*/experiments/*_meta.json`.
 * **Evaluate Naive Baselines:**
   ```bash
   python test_naive_baselines.py --config config/<config_file>.yaml --semids outputs/semids.pt
@@ -90,8 +95,9 @@ Tests are managed using `pytest`. Configuration options are defined in `pyprojec
 
 ## Directory Structure
 
-- **Root Scripts:** `main.py`, `train_quantizer.py`, `train_rqkmeans.py`, `train_seq2seq.py`, `test_seq2seq.py`, `train_sasrec.py`, `test_sasrec.py`, `generate_semids.py`, `test_naive_baselines.py`.
+- **Root Scripts:** `main.py` (CLI), `run_experiments.py` (multi-seed driver), `train_quantizer.py`, `train_rqkmeans.py`, `train_seq2seq.py`, `test_seq2seq.py`, `train_sasrec.py`, `test_sasrec.py`, `generate_semids.py`, `test_naive_baselines.py`.
 - **`modules/`**: Package-based model implementations.
+  - **`vae/`**: `model.py` with `QuantizedAutoEncoder`, the encoder-quantizer-decoder wrapper shared by the quantizers.
   - **`rqvae/`**: Core RQ-VAE SID generation.
     - `model.py`: Main `RQ_VAE` class.
     - `networks.py`: Encoder & Decoder (MLP architectures).
@@ -107,16 +113,16 @@ Tests are managed using `pytest`. Configuration options are defined in `pyprojec
     - `seq2seq.py`: `TigerSeq2Seq` (T5-based TIGER).
   - **`sasrec/`**: Sequential recommendation baseline.
     - `model.py`: `SASRec` decoder-only Transformer.
-- **`schemas/`**: Typed output schemas (`rq_vae.py`, `quantization.py`).
-- **`notebooks/`**: Marimo interactive analysis notebooks (`sid_analysis.py`, `analyze_sid_quality.py`, `check_utilization.py`, etc.).
-- **`experiments/`**: Experimental seq2seq variants (`seq2seq_v2.py`, `seq2seq_v3_grid.py`).
+- **`schemas/`**: Typed output schemas (`vae.py`: `VaeOutput`; `quantization.py`: `QuantizeOutput`, `QuantizeForwardMode`, `QuantizeDistance`).
 - **`plotting/`**: Plotting utilities (`plot.py`).
 - **`data/`**: Data loading and preprocessing (`amazon_data.py`, `ml1m.py`, `loader.py`, `factory.py`, `schemas.py`, `sequence.py`, `preprocessing.py`).
-- **`utils/`**: Helper scripts (`wandb.py`, `metrics.py`, `model_id_generation.py`, `sid_evaluation.py`).
+- **`utils/`**: Helper scripts (`wandb.py`, `metrics.py`, `model_id_generation.py`, `sid_evaluation.py`, `seed.py`: `set_seed` for reproducible runs).
 - **`tests/`**: Unit and integration tests (`tests/unit/`, `tests/integration/`).
 - **`config/`**: YAML configuration files.
 - **`models/`**: Trained model checkpoints (`.pt`).
-- **`outputs/`**: Generated Semantic IDs (`semids.pt`).
+- **`outputs/`**: Generated Semantic IDs (`semids.pt`) and, from `run_experiments.py`, `experiments/` (meta JSONs, configs).
+- **`models_beauty_v2/`, `models_toys/`, `outputs_beauty_v2/`, `outputs_toys/`**: finished multi-seed runs per dataset (Beauty = the September rerun `*_beauty_v2`). Each `outputs_*/experiments/` holds the `*_meta.json` files that `../analysis/scripts/aggregate.py` reads. `models_beauty/` and `outputs_beauty/` are the superseded July runs: never read them.
+- **Git-ignored, local only** (see `.gitignore`): `dataset/`, `models*/`, `outputs*/`, `notebooks/` (exploratory SID-analysis notebooks, e.g. `sid_analysis.py`, `check_utilization.py`), `experiments/` (separator-token seq2seq experiments), `wandb/`, `hyperopt_results/`. The report/thesis marimo notebooks live in `../analysis/notebooks/`.
 
 ---
 
@@ -126,8 +132,8 @@ Tests are managed using `pytest`. Configuration options are defined in `pyprojec
 - **Latent Space:** Hierarchical discrete codes (e.g., `[45, 12, 255]`).
 - **Loss:** Reconstruction loss uses `mean` reduction with L2-normalization on both input and reconstruction for semantic consistency on the unit hypersphere.
 - **Decoder:** No `Sigmoid` output activation to support full dynamic range.
-- **SID Evaluation:** `utils/sid_evaluation.py` provides `compute_utilisation` (per-layer codebook coverage and perplexity).
-- **Schemas:** `schemas/rq_vae.py` defines `RqVaeOutput` and `RqVaeComputedLosses` NamedTuples with per-layer diagnostics (layer coverages, entropies, residual norms).
+- **SID Evaluation:** `utils/sid_evaluation.py` provides `compute_utilisation` (per-layer codebook usage and perplexity; the returned dict key is still named `coverage`, the project term is "codebook usage").
+- **Schemas:** `schemas/vae.py` defines the `VaeOutput` dataclass (loss, reconstruction loss, quantization loss, a `metrics` dict for diagnostics).
 
 ## TIGER / Seq2Seq Architecture
 

@@ -8,8 +8,10 @@
 
 dataset
 models
+models_*
 plots
 outputs
+outputs_*
 notebooks
 experiments
 
