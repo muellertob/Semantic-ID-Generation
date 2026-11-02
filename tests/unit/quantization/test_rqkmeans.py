@@ -1,9 +1,10 @@
 """
 Unit tests for RQ-KMeans quantization (modules/rqkmeans/).
 
-Covers BatchKMeans (init, fit, assign) and RQKMeans (fit_and_generate, save/load)
+Covers BatchKMeans (init, fit, assign) and RQKMeans (fit, generate, fit_and_generate, save/load)
 in isolation — no orchestration or I/O.
 """
+import pytest
 import torch
 import torch.nn.functional as F
 from modules.rqkmeans.kmeans import BatchKMeans
@@ -122,28 +123,25 @@ class TestRQKMeansFitAndGenerate:
 
         residuals = []
 
-        class _CapturingRQKMeans(RQKMeans):
-            def fit_and_generate(self, x):
-                residual = x.clone().float()
-                sem_ids = torch.zeros(x.shape[0], self.n_layers, dtype=torch.long)
-                for layer_idx, km in enumerate(self.kmeans_layers):
-                    if self.normalize_residuals:
-                        residual = F.normalize(residual, p=2, dim=-1)
-                    km.fit(residual)
-                    ids, quantized = km.assign(residual)
-                    residual = residual - quantized
-                    residuals.append(residual.norm(dim=1).mean().item())
-                    sem_ids[:, layer_idx] = ids
-                return sem_ids
+        class _RecordingKMeans(BatchKMeans):
+            def fit(self, x):
+                residuals.append(x.norm(dim=1).mean().item())
+                super().fit(x)
 
-        model = _CapturingRQKMeans(n_layers=n_layers, n_clusters=n_clusters,
+        class _RecordingRQKMeans(RQKMeans):
+            def _make_kmeans_layer(self):
+                return _RecordingKMeans(n_clusters=self.n_clusters, n_iters=self.n_iters, seed=self.seed)
+
+        model = _RecordingRQKMeans(n_layers=n_layers, n_clusters=n_clusters,
                                    n_iters=20, normalize_residuals=False, seed=7)
-        model.fit_and_generate(x)
+        model.fit(x)
 
         assert len(residuals) == n_layers
-        assert residuals[1] < residuals[0], (
-            f"Residual norm should decrease: L1={residuals[0]:.4f}, L2={residuals[1]:.4f}"
-        )
+        for layer in range(1, n_layers):
+            assert residuals[layer] < residuals[layer - 1], (
+                f"Residual norm should decrease: L{layer}={residuals[layer - 1]:.4f}, "
+                f"L{layer + 1}={residuals[layer]:.4f}"
+            )
 
     def test_normalize_residuals_flag(self):
         """When normalize_residuals=True, each fit() input must have unit row norms."""
@@ -192,6 +190,53 @@ class TestRQKMeansFitAndGenerate:
         sem_ids = model.fit_and_generate(x)
 
         assert torch.equal(sem_ids[:, 0], expected_ids)
+
+
+class TestRQKMeansFitGenerate:
+
+    @staticmethod
+    def _model(normalize_residuals):
+        return RQKMeans(n_layers=2, n_clusters=4, n_iters=5,
+                        normalize_residuals=normalize_residuals, seed=1)
+
+    def test_fit_and_generate_is_fit_then_generate(self):
+        x = torch.randn(60, 8)
+        a = self._model(True).fit_and_generate(x)
+        model = self._model(True)
+        model.fit(x)
+        assert torch.equal(a, model.generate(x))
+
+    def test_generate_assigns_other_items_through_the_fitted_centroids(self):
+        torch.manual_seed(0)
+        x = torch.randn(60, 8)
+        model = self._model(False)
+        model.fit(x[:40])
+        ids = model.generate(x)
+        assert ids.shape == (60, 2)
+        # fitting on a subset does not depend on the other items
+        ref = self._model(False)
+        ref.fit(x[:40])
+        assert torch.equal(model.kmeans_layers[0].centroids, ref.kmeans_layers[0].centroids)
+        assert torch.equal(ids[:40], ref.generate(x[:40]))
+
+    def test_generate_with_normalized_residuals_uses_row_wise_normalization(self):
+        torch.manual_seed(0)
+        x = torch.randn(60, 8)
+        model = self._model(True)
+        model.fit(x)
+        # normalization is per row, so an item gets the same ID alone as inside a batch
+        assert torch.equal(model.generate(x[5:6]), model.generate(x)[5:6])
+
+    def test_generate_before_fit_raises(self):
+        with pytest.raises(RuntimeError, match="not been fitted"):
+            self._model(False).generate(torch.randn(10, 8))
+
+    def test_generate_after_load(self, tmp_path):
+        x = torch.randn(60, 8)
+        model = self._model(True)
+        ids = model.fit_and_generate(x)
+        model.save(str(tmp_path / "m.pt"))
+        assert torch.equal(RQKMeans.load(str(tmp_path / "m.pt")).generate(x), ids)
 
 
 class TestRQKMeansSaveLoad:

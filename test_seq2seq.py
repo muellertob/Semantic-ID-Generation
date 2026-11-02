@@ -9,6 +9,7 @@ from functools import partial
 
 from modules.recommender import TigerSeq2Seq
 from data.loader import load_amazon_sequences
+from data.protocols import get_split_config
 from data.sequence import SemanticIDSequenceDataset, collate_fn
 from train_seq2seq import compute_metrics
 from utils.seed import set_seed, seed_worker, get_seeded_generator
@@ -59,7 +60,7 @@ def run_testing(config_path, semantic_ids_path, model_path, overrides=None):
  
     # load sequential data
     logger.info("Loading User History Data (Test Split)...")
-    sequences, num_users, num_items = load_amazon_sequences(category=config.data.category)
+    sequences, num_users, num_items = load_amazon_sequences(config.data.category, get_split_config(config))
     logger.info(f"Loaded history for {num_users} users and {num_items} items")
     
     # create dataset and dataloader for TEST split

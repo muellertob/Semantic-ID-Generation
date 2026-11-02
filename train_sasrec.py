@@ -10,6 +10,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from data.loader import load_amazon_sequences
+from data.protocols import check_sasrec_protocol, get_split_config
 from data.sequence import SASRecDataset, sasrec_collate_fn
 from modules.sasrec.model import SASRec, sample_negatives
 from utils.wandb import get_run_name, wandb_login
@@ -93,6 +94,8 @@ def run_training(config_path, resume_path=None, overrides=None):
     
     logging.basicConfig(level=logging.INFO)
 
+    check_sasrec_protocol(config)
+
     device_str = config.general.get('device', None)
     if device_str is not None:
         device = torch.device(device_str)
@@ -126,7 +129,7 @@ def run_training(config_path, resume_path=None, overrides=None):
     logger.info(f"SASRec run name: {model_id}")
 
     # data
-    sequences, num_users, num_items = load_amazon_sequences(category=config.data.category)
+    sequences, num_users, num_items = load_amazon_sequences(config.data.category, get_split_config(config))
     logger.info(f"Loaded {num_users} users, {num_items} items")
 
     train_ds = SASRecDataset(sequences, num_items=num_items, max_len=max_seq_len, mode='train')

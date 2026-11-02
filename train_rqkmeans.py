@@ -19,6 +19,7 @@ import torch
 from omegaconf import OmegaConf
 
 from data.factory import load_data
+from data.protocols import get_split_config
 from generate_semids import resolve_collisions
 from modules.rqkmeans import RQKMeans
 from utils.sid_evaluation import evaluate_semids
@@ -53,6 +54,14 @@ def run_training(config_path: str | None, _config_override=None, overrides=None)
     embeddings = load_data(config, split="all")
     logger.info(f"Loaded {len(embeddings)} item embeddings, dim={embeddings.shape[1]}")
 
+    # under a global temporal split the clustering is fitted on the stage-1 (warm)
+    # items only, otherwise on all items; SIDs are generated for all items
+    if get_split_config(config).protocol == 'gts':
+        embeddings_fit = load_data(config, split="train")
+        logger.info(f"Fitting RQ-KMeans on {len(embeddings_fit)} of {len(embeddings)} items (GTS stage-1 items)")
+    else:
+        embeddings_fit = embeddings
+
     # fit model and generate raw semantic IDs
     model = RQKMeans(
         n_layers=config.model.codebook_layers,
@@ -61,7 +70,8 @@ def run_training(config_path: str | None, _config_override=None, overrides=None)
         normalize_residuals=config.model.normalize_residuals,
         seed=config.general.seed,
     )
-    sem_ids_raw = model.fit_and_generate(embeddings)
+    model.fit(embeddings_fit)
+    sem_ids_raw = model.generate(embeddings)
     logger.info(f"Raw semantic IDs shape: {sem_ids_raw.shape}")
 
     # evaluate on raw SIDs before collision resolution

@@ -9,6 +9,7 @@ from functools import partial
 from tqdm import tqdm
 
 from data.loader import load_amazon_sequences
+from data.protocols import get_split_config
 from data.sequence import SemanticIDSequenceDataset, collate_fn
 from utils.metrics import MetricAccumulator
 from utils.seed import set_seed, seed_worker, get_seeded_generator
@@ -73,7 +74,7 @@ def run_baselines(config_path, semantic_ids_path, k_list=[5, 10, 20]):
     tuple_size = semantic_ids.shape[1]
     
     logger.info("Loading User History Data (Test Split)...")
-    sequences, num_users, loaded_num_items = load_amazon_sequences(category=config.data.category)
+    sequences, num_users, loaded_num_items = load_amazon_sequences(config.data.category, get_split_config(config))
     
     # compute most popular items from train split
     popular_item_ids = compute_popularity(sequences, num_items)

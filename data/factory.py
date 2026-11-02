@@ -1,4 +1,5 @@
 from data.loader import load_movie_lens, load_amazon
+from data.protocols import get_split_config
 import logging
 
 # Set up logging
@@ -31,8 +32,9 @@ def load_data(config, split='train'):
     elif config.data.dataset == "amazon":
         data = load_amazon(
             category=config.data.category,
+            split_config=get_split_config(config),
             normalize_data=config.data.normalize_data,
-            split=split
+            split=split,
         )
     elif config.data.dataset == "lastfm":
         raise NotImplementedError("LastFM dataset loading is not implemented yet.")

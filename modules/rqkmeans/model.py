@@ -8,8 +8,8 @@ class RQKMeans:
     """
     Residual quantization with batch K-Means.
 
-    Fits n_layers of BatchKMeans on successive residuals and returns
-    a semantic ID matrix of shape (n_items, n_layers).
+    fit() fits n_layers of BatchKMeans on successive residuals; generate() assigns any
+    items to the fitted centroids and returns a semantic ID matrix of shape (n_items, n_layers).
 
     Args:
         n_layers: Number of residual quantization layers.
@@ -37,29 +37,51 @@ class RQKMeans:
             seed=self.seed,
         )
 
-    def fit_and_generate(self, x: torch.Tensor) -> torch.Tensor:
+    def _normalize_if_enabled(self, residual: torch.Tensor) -> torch.Tensor:
         """
-        Fit all layers and return semantic IDs.
+        L2-normalize each residual row if normalize_residuals is set; otherwise return the
+        residual unchanged.
+        """
+        if self.normalize_residuals:
+            return F.normalize(residual, p=2, dim=-1)
+        return residual
+
+    def fit(self, x: torch.Tensor) -> None:
+        """
+        Fit all layers on successive residuals of x and store the centroids.
 
         Args:
             x: Item embedding tensor of shape (n_items, d).
+        """
+        residual = x.float().clone()
+        for km in self.kmeans_layers:
+            residual = self._normalize_if_enabled(residual)
+            km.fit(residual)
+            residual = residual - km.assign(residual)[1] # assign[1] returns the quantized embeddings
+
+    def generate(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Assign the items of x to the fitted centroids, layer by layer on the residuals.
+
+        Args:
+            x: Item embedding tensor of shape (n_items, d), need not be the fitted items.
 
         Returns:
             sem_ids: LongTensor of shape (n_items, n_layers).
         """
-        n_items = x.shape[0]
         residual = x.float().clone()
-        sem_ids = torch.zeros(n_items, self.n_layers, dtype=torch.long)
-
+        sem_ids = torch.zeros(x.shape[0], self.n_layers, dtype=torch.long)
         for layer_idx, km in enumerate(self.kmeans_layers):
-            if self.normalize_residuals:
-                residual = F.normalize(residual, p=2, dim=-1)
-            km.fit(residual)
+            residual = self._normalize_if_enabled(residual)
             ids, quantized = km.assign(residual)
             residual = residual - quantized
             sem_ids[:, layer_idx] = ids
-
         return sem_ids
+
+    def fit_and_generate(self, x: torch.Tensor) -> torch.Tensor:
+        """Fit all layers on x and return its semantic IDs of shape (n_items, n_layers)."""
+        self.fit(x)
+        return self.generate(x)
 
     def save(self, path: str) -> None:
         """

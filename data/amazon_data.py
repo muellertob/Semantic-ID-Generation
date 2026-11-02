@@ -4,11 +4,9 @@ import numpy as np
 import os
 import os.path as osp
 import pandas as pd
-import polars as pl
 import torch
 
-from collections import defaultdict
-from data.preprocessing import encode_text_embeddings, sequence_df_to_tensor_dict
+from data.preprocessing import encode_text_embeddings
 from torch_geometric.data import download_google_url
 from torch_geometric.data import extract_zip
 from torch_geometric.data import HeteroData
@@ -69,46 +67,7 @@ class AmazonReviews(InMemoryDataset):
             return self.id_permutation[original_idx].item()
         return original_idx
 
-    def train_test_split(self, max_seq_len=20):
-        splits = ["train", "eval", "test"]
-        sequences = {sp: defaultdict(list) for sp in splits}
-        user_ids = []
-        with open(os.path.join(self.raw_dir, self.split, "sequential_data.txt"), "r") as f:
-            for line in f:
-                parsed_line = list(map(int, line.strip().split()))
-                items = [self._remap_ids(id) for id in parsed_line[1:]]
-
-                # filter out users with less than 5 reviews
-                if len(items) < 5:
-                    continue
-
-                user_ids.append(parsed_line[0])
-
-                # TRAIN SPLIT
-                # all but last three items
-                # note: we store the full un-padded sequence for training flexibility.
-                train_items = items[:-3]
-                sequences["train"]["itemId"].append(train_items)
-                sequences["train"]["itemId_fut"].append(items[-3])
-
-                # EVAL SPLIT
-                # window sequence with second last item as target
-                eval_items = items[-(max_seq_len+2):-2]
-                sequences["eval"]["itemId"].append(eval_items + [-1] * (max_seq_len - len(eval_items)))
-                sequences["eval"]["itemId_fut"].append(items[-2])
-
-                # TEST SPLIT
-                # window sequence with last item as target
-                test_items = items[-(max_seq_len+1):-1]
-                sequences["test"]["itemId"].append(test_items + [-1] * (max_seq_len - len(test_items)))
-                sequences["test"]["itemId_fut"].append(items[-1])
-
-        for sp in splits:
-            sequences[sp]["userId"] = user_ids
-            sequences[sp] = pl.from_dict(sequences[sp])
-        return sequences
-
-    def process(self, max_seq_len=20) -> None:
+    def process(self) -> None:
         data = HeteroData()
 
         with open(os.path.join(self.raw_dir, self.split, "datamaps.json"), 'r') as f:
@@ -122,13 +81,6 @@ class AmazonReviews(InMemoryDataset):
 
         # save the permutation to the data object for future reference/inference
         data["item"].id_permutation = self.id_permutation
-
-        # construct user sequences
-        sequences = self.train_test_split(max_seq_len=max_seq_len)
-        data["user", "rated", "item"].history = {
-            k: sequence_df_to_tensor_dict(v, ["itemId"])
-            for k, v in sequences.items()
-        }
 
         # compute item features
         asin2id = pd.DataFrame([{"asin": k, "id": self._remap_ids(int(v))} for k, v in data_maps["item2id"].items()])

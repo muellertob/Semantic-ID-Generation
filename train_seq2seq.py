@@ -13,6 +13,7 @@ import uuid
 
 from modules.recommender import TigerSeq2Seq
 from data.loader import load_amazon_sequences
+from data.protocols import get_split_config
 from data.sequence import SemanticIDSequenceDataset, collate_fn, collate_fn_with_augmentation
 from utils.wandb import wandb_init, get_run_name, log_model_artifact
 from utils.model_id_generation import generate_model_id
@@ -202,7 +203,7 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
 
     # load sequential data
     logger.info("Loading User History Data...")
-    sequences, num_users, num_items = load_amazon_sequences(category=config.data.category)
+    sequences, num_users, num_items = load_amazon_sequences(config.data.category, get_split_config(config))
     logger.info(f"Loaded history for {num_users} users and {num_items} items")
     
     # create datasets and dataloaders

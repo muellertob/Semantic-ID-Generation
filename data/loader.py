@@ -1,22 +1,65 @@
-import torch
 import os
-from data.amazon_data import AmazonReviews
-import torch.nn.functional as F
-import pandas as pd
-from sentence_transformers import SentenceTransformer
-import torch
 
-def load_amazon(category='beauty', normalize_data=True, split='train'):
-    path = fr"dataset/amazon/processed/data_{category}.pt"
-    
-    if(not os.path.exists(path)):
-        AmazonReviews("dataset/amazon", split=category)
-    
+import pandas as pd
+import torch
+import torch.nn.functional as F
+from sentence_transformers import SentenceTransformer
+
+from data.amazon_data import AmazonReviews
+from data.amazon_interactions import read_amazon_interactions
+from data.split_cache import load_or_build_split
+
+AMAZON_ROOT = "dataset/amazon"
+AMAZON_PROCESSED_DIR = f"{AMAZON_ROOT}/processed"
+
+
+def _load_amazon_data(category):
+    """The processed item data of a category (HeteroData); built on first use."""
+    path = f"{AMAZON_PROCESSED_DIR}/data_{category}.pt"
+    if not os.path.exists(path):
+        AmazonReviews(AMAZON_ROOT, split=category)
     data, _, _ = torch.load(path, weights_only=False)
-    
+    return data
+
+
+def load_amazon_split(category, split_config):
+    """
+    The Stage-2 split of an Amazon category under the given SplitConfig (data/protocols.py),
+    built from the raw P5 files on first use and cached (data/split_cache.py).
+    """
+    data = _load_amazon_data(category)
+    id_permutation = data['item']['id_permutation']
+    return load_or_build_split(
+        name=category,
+        split_config=split_config,
+        processed_dir=AMAZON_PROCESSED_DIR,
+        read_sequences=lambda: read_amazon_interactions(
+            os.path.join(AMAZON_ROOT, "raw", category), id_permutation,
+            with_times=split_config.protocol == 'gts'),
+        id_permutation=id_permutation,
+        num_items=data['item']['x'].shape[0],
+    )
+
+
+def load_amazon(category, split_config, normalize_data=True, split='train'):
+    """
+    Load the item embeddings of an Amazon category.
+
+    protocol 'loo': 'train' / 'test' are the 95% / 5% item split (is_train), the
+    normalization mean comes from the train items.
+    protocol 'gts': 'train' are the stage-1 (warm) items of the global temporal
+    split, 'test' the remaining items; the normalization mean comes from the warm items.
+    'all' returns all items (normalized with the same mean).
+    """
+    data = _load_amazon_data(category)
+
+    if split_config.protocol == 'gts':
+        train_mask = load_amazon_split(category, split_config)['stage1_items']
+    else:
+        train_mask = data['item']['is_train'] == True
+
     if normalize_data:
         # compute mean from training data only to avoid data leakage
-        train_mask = data['item']['is_train'] == True
         train_mean = data['item']['x'][train_mask].mean(dim=0)
         # center the data
         data['item']['x'] = data['item']['x'] - train_mean
@@ -26,56 +69,33 @@ def load_amazon(category='beauty', normalize_data=True, split='train'):
     if split == 'all':
         data_clean = data['item']['x']
     elif split == 'train':
-        data_clean = data['item']['x'][data['item']['is_train'] == True]
+        data_clean = data['item']['x'][train_mask]
     elif split == 'test':
-        data_clean = data['item']['x'][data['item']['is_train'] == False]
+        data_clean = data['item']['x'][~train_mask]
     else:
         raise ValueError(f"Invalid split: {split}. Must be 'train', 'test', or 'all'.")
 
     return data_clean
 
-def load_amazon_sequences(category='beauty'):
+def load_amazon_sequences(category, split_config):
     """
-    Load the processed Amazon dataset and return the user history sequences.
-    
+    Load the user history rows of an Amazon category under the given SplitConfig.
+
+    protocol 'loo': per-user leave-one-out splits 'train', 'eval', 'test'.
+    protocol 'gts': global temporal split with the splits 'train', 'eval', 'test', 'test_cold'.
+    Row layout and rules: data/protocols.py. The histories are complete; the length of the
+    model input is set by the collate function (data/sequence.py).
+
     Returns:
         tuple: (sequences, num_users, num_items)
-            sequences: Dict containing 'train', 'eval', 'test' splits with history tensors
-            num_users: Total number of users
+            sequences: Dict of split name to rows (userId, itemId, itemId_fut, ...)
+            num_users: Number of distinct users with at least one row
             num_items: Total number of items
     """
-    path = fr"dataset/amazon/processed/data_{category}.pt"
-    
-    if(not os.path.exists(path)):
-        AmazonReviews("dataset/amazon", split=category)
-    
-    content = torch.load(path, weights_only=False)
-    data = content[0] # unpacked from (data, slices, ...)
-    
-    # extract sequence data
-    sequences = data[("user", "rated", "item")]["history"]
-    
-    # infer num_items
-    if 'item' in data and 'x' in data['item']:
-        num_items = data['item']['x'].shape[0]
-    else:
-        num_items = 0
-        
-    # infer num_users from sequences
-    max_user_id = 0
-    for split in ['train', 'eval', 'test']:
-        if split in sequences and 'userId' in sequences[split]:
-            # check if it's a tensor or list
-            u_ids = sequences[split]['userId']
-            if isinstance(u_ids, torch.Tensor):
-                max_id = u_ids.max().item()
-            else:
-                max_id = max(u_ids) if len(u_ids) > 0 else 0
-            max_user_id = max(max_user_id, max_id)
-    
-    num_users = max_user_id + 1
-    
-    return sequences, num_users, num_items
+    split = load_amazon_split(category, split_config)
+    sequences = split['history']
+    num_users = torch.cat([rows['userId'] for rows in sequences.values()]).unique().numel()
+    return sequences, num_users, split['meta']['num_items']
 
 def load_movie_lens(category='1M', dimension="user", train=True, raw=True):
     # Build the file path

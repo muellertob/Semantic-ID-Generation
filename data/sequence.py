@@ -1,20 +1,28 @@
 import torch
 from torch.utils.data import Dataset
-import logging
 
-logger = logging.getLogger(__name__)
+
+def get_max_history_len(config):
+    """
+    Length of the model-input history window: the number of most recent history items the
+    recommender sees (config.seq2seq.max_history_len, 20 by default).
+    """
+    return config.seq2seq.get('max_history_len', 20)
+
 
 class SemanticIDSequenceDataset(Dataset):
     """
     Dataset for TIGER Seq2Seq training.
-    Maps raw item IDs in user history to Semantic ID tuples.
+    Maps the raw item IDs of a user's full history to Semantic ID tuples. The length of the
+    model input is set by the collate function.
     """
     def __init__(self, history_data, semantic_ids, mode='train'):
         """
         Args:
-            history_data (dict): Dictionary containing sequence data (from AmazonReviews)
+            history_data (dict): Split name to rows in the row layout of data/protocols.py
+                (userId, itemId, itemId_fut, optional is_last)
             semantic_ids (torch.Tensor): Tensor of shape [num_items, codebook_layers]
-            mode (str): 'train', 'eval', or 'test'
+            mode (str): 'train', 'eval', 'test' or 'test_cold'
         """
         self.semantic_ids = semantic_ids
         self.mode = mode
@@ -24,7 +32,10 @@ class SemanticIDSequenceDataset(Dataset):
         self.item_seqs = history_data[mode]["itemId"]
         self.target_items = history_data[mode]["itemId_fut"]
         
-        self.num_items = semantic_ids.shape[0]
+        # evaluation-only fields (eval and test modes)
+        self.with_eval_fields = (mode != 'train')
+        self.is_last = history_data[mode].get("is_last", None)
+        
         self.codebook_layers = semantic_ids.shape[1]
 
     def __len__(self):
@@ -34,66 +45,49 @@ class SemanticIDSequenceDataset(Dataset):
         """
         Retrieves and maps a user sequence to Semantic ID tuples.
         Returns:
-            history_tuples (torch.Tensor): [T, codebook_layers]
+            history_tuples (torch.Tensor): [T, codebook_layers], the full history
             target_tuple (torch.Tensor): [codebook_layers]
             user_id (int): User ID
+            seen_tuples (torch.Tensor): [T, codebook_layers] (eval/test modes only)
+            is_last (bool): last target of the user (eval/test modes only)
         """
-        # get raw data
-        user_id = self.user_ids[idx]
-        raw_seq = self.item_seqs[idx]
-        target_item = self.target_items[idx]
+        history = torch.as_tensor(self.item_seqs[idx], dtype=torch.long)
+        history_tuples = self.semantic_ids[history]
+        target_tuple = self.semantic_ids[int(self.target_items[idx])]
         
-        # ensure raw_seq is a tensor
-        if isinstance(raw_seq, list):
-            raw_seq = torch.tensor(raw_seq, dtype=torch.long)
-            
-        # ensure target_item is a scalar integer
-        if isinstance(target_item, torch.Tensor):
-            target_item = target_item.item()
-        
-        # PROCESS SEQUENCE
-        # create a mask to ignore padding (-1) or invalid IDs
-        valid_mask = (raw_seq >= 0) & (raw_seq < self.num_items)
-        
-        # initialize tensor with padding (-1)
-        seq_tuples = torch.full((len(raw_seq), self.codebook_layers), -1, dtype=torch.long)
-        
-        if valid_mask.any():
-            # select all valid IDs
-            valid_indices = raw_seq[valid_mask].long()
-            # map to semantic IDs, invalid IDs remain as -1
-            seq_tuples[valid_mask] = self.semantic_ids[valid_indices]
-
-        # PROCESS TARGET ITEM
-        # target is a single item ID
-        if 0 <= target_item < self.num_items:
-            target_tuple = self.semantic_ids[target_item]
-        else:
-            # set to zeros if invalid
-            target_tuple = torch.zeros(self.codebook_layers, dtype=torch.long)
-        
-        return {
-            "history_tuples": seq_tuples,
+        item = {
+            "history_tuples": history_tuples,
             "target_tuples": target_tuple.unsqueeze(0), # unsqueeze as decoder expects sequence
-            "user_id": user_id
+            "user_id": self.user_ids[idx]
         }
+        
+        if self.with_eval_fields:
+            # keep the full history for metric calculation, as collate_fn cuts history_tuples
+            item["seen_tuples"] = history_tuples
+            item["is_last"] = bool(self.is_last[idx]) if self.is_last is not None else True
+        
+        return item
+
 
 def collate_fn(batch, max_len=None):
     """
     Custom collate function to pad sequences in the batch.
+    Cuts every history to its last max_len items (the model input window) if max_len is given.
     Returns:
         dict with keys:
             'history_tuples': Padded tensor of shape [B, T, codebook_layers]
             'target_tuples': Tensor of shape [B, 1, codebook_layers]
             'user_ids': Tensor of shape [B]
+        and, if the items carry them (eval/test datasets):
+            'seen_tuples': Tensor of shape [B, S_max, codebook_layers], padded with -1
+            'is_last': BoolTensor of shape [B]
     """
     history_tuples = [item['history_tuples'] for item in batch]
     target_tuples = [item['target_tuples'] for item in batch]
     user_ids = [item['user_id'] for item in batch]
     
-    # trim to max_len if specified
     if max_len is not None:
-        history_tuples = [h[-max_len:] if h.size(0) > max_len else h for h in history_tuples]
+        history_tuples = [h[-max_len:] for h in history_tuples]
         
     # pad history sequences
     # expects input [T, codebook_layers], pads with -1
@@ -107,11 +101,23 @@ def collate_fn(batch, max_len=None):
     stacked_targets = torch.stack(target_tuples, dim=0)
     stacked_users = torch.tensor(user_ids, dtype=torch.long)
     
-    return {
+    out = {
         "history_tuples": padded_history,
         "target_tuples": stacked_targets,
         "user_ids": stacked_users
     }
+    
+    # evaluation-only fields (not cut to max_len)
+    if 'seen_tuples' in batch[0]:
+        out["seen_tuples"] = torch.nn.utils.rnn.pad_sequence(
+            [item['seen_tuples'] for item in batch],
+            batch_first=True,
+            padding_value=-1
+        )
+    if 'is_last' in batch[0]:
+        out["is_last"] = torch.tensor([item['is_last'] for item in batch], dtype=torch.bool)
+    
+    return out
 
 
 def collate_fn_with_augmentation(batch, max_len=None):
@@ -220,9 +226,9 @@ class SASRecDataset(Dataset):
     def __init__(self, history_data, num_items, max_len=50, mode='train'):
         """
         Args:
-            history_data: dict with splits, each containing userId, itemId, itemId_fut
+            history_data: dict with splits, each containing userId, itemId (the full history), itemId_fut
             num_items: total number of items in the dataset
-            max_len: maximum sequence length
+            max_len: length of the model input (the last max_len items of the history)
             mode: 'train', 'eval', or 'test'
         """
         self.num_items = num_items
@@ -237,31 +243,12 @@ class SASRecDataset(Dataset):
         return len(self.user_ids)
 
     def __getitem__(self, idx):
-        raw_seq = self.item_seqs[idx]
-        target_raw = self.target_items[idx]
+        raw_seq = torch.as_tensor(self.item_seqs[idx], dtype=torch.long)
+        target = int(self.target_items[idx])
 
-        if isinstance(raw_seq, list):
-            raw_seq = torch.tensor(raw_seq, dtype=torch.long)
-        elif isinstance(raw_seq, torch.Tensor):
-            raw_seq = raw_seq.detach().clone()
-        else:
-            raw_seq = torch.tensor(raw_seq, dtype=torch.long)
-            
-        if isinstance(target_raw, torch.Tensor):
-            target_raw = target_raw.item()
-
-        # remove existing padding (-1) to handle both unpadded (train) and padded (eval/test)
-        # and ensure we can left-pad properly.
-        valid_items = raw_seq[raw_seq != -1]
-        
-        # truncate to last max_len items
-        if len(valid_items) > self.max_len:
-            valid_items = valid_items[-self.max_len:]
-
-        seq_len = len(valid_items)
-
-        # convert to 1-based IDs
-        items_1based = valid_items + 1
+        # the last max_len items of the history, as 1-based IDs
+        items_1based = raw_seq[-self.max_len:] + 1
+        seq_len = len(items_1based)
 
         # left-pad to max_len with 0
         item_seq = torch.zeros(self.max_len, dtype=torch.long)
@@ -270,7 +257,7 @@ class SASRecDataset(Dataset):
 
         return {
             'item_seq': item_seq,
-            'target_item': int(target_raw + 1),  # 1-based
+            'target_item': target + 1,  # 1-based
             'seq_len': seq_len,
         }
 

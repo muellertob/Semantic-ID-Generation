@@ -117,7 +117,7 @@ Tests are managed using `pytest`. Configuration options are defined in `pyprojec
     - `model.py`: `SASRec` decoder-only Transformer.
 - **`schemas/`**: Typed output schemas (`vae.py`: `VaeOutput`; `quantization.py`: `QuantizeOutput`, `QuantizeForwardMode`, `QuantizeDistance`).
 - **`plotting/`**: Plotting utilities (`plot.py`).
-- **`data/`**: Data loading and preprocessing (`amazon_data.py`, `ml1m.py`, `loader.py`, `factory.py`, `schemas.py`, `sequence.py`, `preprocessing.py`).
+- **`data/`**: Data loading and preprocessing: `amazon_data.py` (`AmazonReviews`: item features and embeddings), `amazon_interactions.py` (reader of the P5 interaction files), `protocols.py` (split protocols, `SplitConfig`, SASRec protocol guard), `split_cache.py` (split cache), `sequence.py` (datasets and collate functions), `loader.py`, `factory.py`, `ml1m.py`, `schemas.py`, `preprocessing.py`.
 - **`utils/`**: Helper scripts (`wandb.py`, `metrics.py`, `model_id_generation.py`, `sid_evaluation.py`, `seed.py`: `set_seed` for reproducible runs).
 - **`tests/`**: Unit and integration tests (`tests/unit/`, `tests/integration/`).
 - **`config/`**: YAML configuration files.
@@ -125,6 +125,16 @@ Tests are managed using `pytest`. Configuration options are defined in `pyprojec
 - **`outputs/`**: Generated Semantic IDs (`semids.pt`) and, from `run_experiments.py`, `experiments/` (meta JSONs, configs).
 - **`models_beauty_v2/`, `models_toys/`, `outputs_beauty_v2/`, `outputs_toys/`**: finished multi-seed runs per dataset (Beauty = the September rerun `*_beauty_v2`). Each `outputs_*/experiments/` holds the `*_meta.json` files that `../analysis/scripts/aggregate.py` reads. `models_beauty/` and `outputs_beauty/` are the superseded July runs: never read them.
 - **Git-ignored, local only** (see `.gitignore`): `dataset/`, `models*/`, `outputs*/`, `notebooks/` (exploratory SID-analysis notebooks, e.g. `sid_analysis.py`, `check_utilization.py`), `experiments/` (separator-token seq2seq experiments), `wandb/`, `hyperopt_results/`. The report/thesis marimo notebooks live in `../analysis/notebooks/`.
+
+---
+
+## Data: evaluation protocols and sequence rows
+
+* **Protocol config:** `data.split_protocol` (`loo` default, or `gts`) and, under `gts`, `data.gts_q_test` / `data.gts_q_val` (0.9). Read them only through `data.protocols.get_split_config(config)` (a frozen `SplitConfig`), which holds the defaults and validates the values.
+* **Row layout and protocol rules:** the row layout of every split is in the module docstring of `data/protocols.py`, the rules of each protocol in the docstrings of `build_loo_split` and `build_gts_split` (pure functions of `(user_id, items, times)` sequences). Splits: `loo` has `train`, `eval`, `test`; `gts` adds `test_cold`.
+* **Model input length** is set in one place: `collate_fn(batch, max_len)` in `data/sequence.py` takes the last `max_len` items of a row's history (`seq2seq.max_history_len`, `sasrec.max_seq_len` for `SASRecDataset`). Stored rows and cache keys carry no history length.
+* **Split cache:** `data/split_cache.py` `load_or_build_split` builds a split from the raw files once and stores it as `dataset/amazon/processed/split_<category>_loo.pt` or `split_<category>_gts_q<q_test>-<q_val>.pt`. The file holds a meta (`FORMAT_VERSION`, protocol, quantiles, `num_items`, md5 of the item-id permutation); a mismatch raises and asks to delete the file. Bump `FORMAT_VERSION` when split rules or layout change. `data/loader.py` `load_amazon_split` / `load_amazon_sequences` / `load_amazon` are the entry points.
+* **Adding a dataset:** write a reader that returns `[(user_id, model_item_ids, times_or_None), ...]` in chronological order (see `data/amazon_interactions.py`; `times` only needed for `gts`), and a loader function that calls `load_or_build_split(name, split_config, processed_dir, read_sequences, id_permutation, num_items)` with its own cache folder. Protocols, datasets and collate functions need no change.
 
 ---
 

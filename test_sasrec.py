@@ -13,6 +13,7 @@ import torch
 from omegaconf import OmegaConf
 
 from data.loader import load_amazon_sequences
+from data.protocols import check_sasrec_protocol, get_split_config
 from data.sequence import SASRecDataset
 from modules.sasrec.model import SASRec
 from train_sasrec import evaluate_metrics
@@ -35,6 +36,7 @@ def run_testing(config_path, model_path, overrides=None):
     set_seed(seed)
         
     logger.info(f"Configuration:\n{OmegaConf.to_yaml(config)}")
+    check_sasrec_protocol(config)
     device_str = config.general.get('device', None)
     if device_str is not None:
         device = torch.device(device_str)
@@ -50,7 +52,7 @@ def run_testing(config_path, model_path, overrides=None):
     dropout = sc.dropout
 
     # data
-    sequences, num_users, num_items = load_amazon_sequences(category=config.data.category)
+    sequences, num_users, num_items = load_amazon_sequences(config.data.category, get_split_config(config))
     logger.info(f"Loaded {num_users} users, {num_items} items")
 
     test_ds = SASRecDataset(sequences, num_items=num_items, max_len=max_seq_len, mode='test')
