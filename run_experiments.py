@@ -413,7 +413,22 @@ GTS_EXPERIMENTS = [
         "quant_overrides": {"model.commit_all_levels": True},
         "recommender_config": "config/recommender/amazon_toy_grid_gts.yaml",
         "codebook_size": 256,
-    }
+    },
+    {
+        "name": "RQ_VAE_center",  # keeps the item vector length: centered input, no BatchNorm, no L2
+        "quant_config": "config/rq-vae/amazon_toy_tiger_gts.yaml",
+        "quant_overrides": {"data.input_normalization": "center", "model.normalize_inputs": False},
+        "recommender_config": "config/recommender/amazon_toy_grid_gts.yaml",
+        "codebook_size": 256,
+    },
+    {
+        "name": "RQ_KMeans_std",  # standardized + L2 input, as the neural quantizers' BatchNorm + L2
+        "quant_config": "config/rq-kmeans/amazon_toy_rqkmeans_gts.yaml",
+        "quant_overrides": {"data.input_normalization": "std_l2"},
+        "recommender_config": "config/recommender/amazon_toy_grid_gts.yaml",
+        "is_rqkmeans": True,
+        "codebook_size": 256,
+    },
 ]
 
 

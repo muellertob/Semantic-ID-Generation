@@ -2,7 +2,7 @@
 data:
   dataset: "amazon"
   batch_size: 1024
-  normalize_data: False
+  input_normalization: "none" # none | center | center_l2 | std_l2
   category: "toys"
   split: "all"
 

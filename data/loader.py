@@ -41,15 +41,39 @@ def load_amazon_split(category, split_config):
     )
 
 
-def load_amazon(category, split_config, normalize_data=True, split='train'):
+INPUT_NORMALIZATIONS = ("none", "center", "center_l2", "std_l2")
+
+
+def normalize_items(x, train_mask, mode):
+    """
+    Normalize item embeddings with statistics of the training items only (no leakage from
+    test or cold items).
+
+    mode: 'none' (unchanged), 'center' (subtract the training mean), 'center_l2' (center, then
+    L2-normalize rows), 'std_l2' (center, divide each dimension by sqrt(var + 1e-5) of the
+    training items as BatchNorm does, then L2-normalize rows).
+    """
+    if mode not in INPUT_NORMALIZATIONS:
+        raise ValueError(f"input_normalization must be one of {INPUT_NORMALIZATIONS}, got {mode!r}")
+    if mode == "none":
+        return x
+    train = x[train_mask]
+    x = x - train.mean(dim=0)
+    if mode == "std_l2":
+        x = x / torch.sqrt(train.var(dim=0, unbiased=False) + 1e-5)
+    if mode in ("center_l2", "std_l2"):
+        x = F.normalize(x, p=2, dim=1)
+    return x
+
+
+def load_amazon(category, split_config, input_normalization, split='train'):
     """
     Load the item embeddings of an Amazon category.
 
-    protocol 'loo': 'train' / 'test' are the 95% / 5% item split (is_train), the
-    normalization mean comes from the train items.
+    protocol 'loo': 'train' / 'test' are the 95% / 5% item split (is_train).
     protocol 'gts': 'train' are the stage-1 (warm) items of the global temporal
-    split, 'test' the remaining items; the normalization mean comes from the warm items.
-    'all' returns all items (normalized with the same mean).
+    split, 'test' the remaining items. 'all' returns all items.
+    input_normalization: see normalize_items; its statistics come from the 'train' items.
     """
     data = _load_amazon_data(category)
 
@@ -58,14 +82,8 @@ def load_amazon(category, split_config, normalize_data=True, split='train'):
     else:
         train_mask = data['item']['is_train'] == True
 
-    if normalize_data:
-        # compute mean from training data only to avoid data leakage
-        train_mean = data['item']['x'][train_mask].mean(dim=0)
-        # center the data
-        data['item']['x'] = data['item']['x'] - train_mean
-        # L2 norm across rows to align the magnitudes
-        data['item']['x'] = F.normalize(data['item']['x'], p=2, dim=1) 
-        
+    data['item']['x'] = normalize_items(data['item']['x'], train_mask, input_normalization)
+
     if split == 'all':
         data_clean = data['item']['x']
     elif split == 'train':

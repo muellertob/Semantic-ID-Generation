@@ -26,7 +26,7 @@ def generate_model_id(config: Dict) -> str:
         dimension = d.get('embedding_dimension', '')
         dim_str = f"-{dimension}" if dimension else ""
         batch_size = d.get('batch_size', '')
-        normalize_data = d.get('normalize_data', False)
+        input_normalization = d.get('input_normalization', 'none')
         hidden_dimension = m.get('hidden_dimensions', [])
         latent_dimension = m.get('latent_dimension', '')
         codebook_layers = m.get('codebook_layers', '')
@@ -39,7 +39,7 @@ def generate_model_id(config: Dict) -> str:
             inner_dim = m.get('inner_dim', '')
             
             model_id = (
-                f"{prefix}-{dataset}{dim_str}-bs{batch_size}-norm{str(normalize_data)[0]}-"
+                f"{prefix}-{dataset}{dim_str}-bs{batch_size}-norm_{input_normalization}-"
                 f"hd{'_'.join(map(str, hidden_dimension))}-ld{latent_dimension}-"
                 f"l{codebook_layers}-levels{levels_str}-proj_{proj_type}_{inner_dim}-"
                 f"lr{t.get('learning_rate', '')}-wd{t.get('weight_decay', '')}-ep{t.get('num_epochs', '')}"
@@ -50,7 +50,7 @@ def generate_model_id(config: Dict) -> str:
             commitment_weight = m.get('commitment_weight', '')
             
             model_id = (
-                f"{prefix}-{dataset}{dim_str}-bs{batch_size}-norm{str(normalize_data)[0]}-"
+                f"{prefix}-{dataset}{dim_str}-bs{batch_size}-norm_{input_normalization}-"
                 f"hd{'_'.join(map(str, hidden_dimension))}-ld{latent_dimension}-"
                 f"cb{codebook_layers}x{codebook_size}-cw{commitment_weight}-"
                 f"lr{t.get('learning_rate', '')}-wd{t.get('weight_decay', '')}-ep{t.get('num_epochs', '')}"

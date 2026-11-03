@@ -40,7 +40,7 @@ def test_quantizer_training_calls_set_seed(tmp_path):
     config = {
         "train": {},
         "model": {"quantizer_type": "fsq"},
-        "data": {"dataset": "amazon", "normalize_data": False},
+        "data": {"dataset": "amazon", "input_normalization": "none"},
         "general": {"seed": 123, "use_wandb": False}
     }
     config_path = str(tmp_path / "quantizer_config.yaml")
@@ -82,7 +82,7 @@ def test_rqkmeans_training_calls_set_seed(tmp_path):
     config = {
         "model": {"codebook_layers": 2, "codebook_size": 4, "n_iters": 5, "normalize_residuals": False},
         "general": {"seed": 789},
-        "data": {"dataset": "amazon", "normalize_data": False}
+        "data": {"dataset": "amazon", "input_normalization": "none"}
     }
     config_path = str(tmp_path / "rqkmeans_config.yaml")
     OmegaConf.save(OmegaConf.create(config), config_path)

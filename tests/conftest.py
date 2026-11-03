@@ -58,7 +58,7 @@ def minimal_config():
         "data": {
             "dataset": "amazon",
             "category": "beauty",
-            "normalize_data": True,
+            "input_normalization": "center_l2",
         },
         "model": {
             "quantizer_type": "rqvae",

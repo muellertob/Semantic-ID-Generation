@@ -3,7 +3,7 @@
 data:
   dataset: "amazon"
   category: "toys"
-  normalize_data: True # important for consistent codebook perplexity
+  input_normalization: "center_l2" # none | center | center_l2 | std_l2
   split_protocol: "gts" # global temporal split
   gts_q_test: 0.9
   gts_q_val: 0.9

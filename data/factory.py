@@ -30,10 +30,13 @@ def load_data(config, split='train'):
             raw=True
         )
     elif config.data.dataset == "amazon":
+        if "normalize_data" in config.data:
+            raise ValueError("data.normalize_data was replaced by data.input_normalization "
+                             "(True -> 'center_l2', False -> 'none')")
         data = load_amazon(
             category=config.data.category,
             split_config=get_split_config(config),
-            normalize_data=config.data.normalize_data,
+            input_normalization=config.data.input_normalization,
             split=split,
         )
     elif config.data.dataset == "lastfm":

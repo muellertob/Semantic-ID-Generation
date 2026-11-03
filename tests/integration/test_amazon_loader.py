@@ -99,23 +99,23 @@ def test_split_is_cached_per_protocol(category):
 
 
 def test_loo_items_use_is_train_mask(category):
-    train = load_amazon(category, LOO, normalize_data=False, split="train")
-    test = load_amazon(category, LOO, normalize_data=False, split="test")
+    train = load_amazon(category, LOO, input_normalization="none", split="train")
+    test = load_amazon(category, LOO, input_normalization="none", split="test")
     assert len(train) == 8 and len(test) == 2
 
 
 def test_gts_items_use_stage1_mask(category):
     # column 0 of the fixture embeddings is the model item id
-    warm = load_amazon(category, GTS, normalize_data=False, split="train")[:, 0].long().tolist()
-    cold = load_amazon(category, GTS, normalize_data=False, split="test")[:, 0].long().tolist()
+    warm = load_amazon(category, GTS, input_normalization="none", split="train")[:, 0].long().tolist()
+    cold = load_amazon(category, GTS, input_normalization="none", split="test")[:, 0].long().tolist()
     assert sorted(warm) == sorted(m(p) for p in range(1, 6))
     assert sorted(cold) == sorted(set(range(10)) - set(warm))
-    assert len(load_amazon(category, GTS, normalize_data=False, split="all")) == 10
+    assert len(load_amazon(category, GTS, input_normalization="none", split="all")) == 10
 
 
 def test_invalid_item_split_raises(category):
     with pytest.raises(ValueError, match="Invalid split"):
-        load_amazon(category, LOO, split="val")
+        load_amazon(category, LOO, input_normalization="none", split="val")
 
 
 @pytest.mark.slow

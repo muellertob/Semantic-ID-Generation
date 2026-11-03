@@ -17,7 +17,7 @@ class TestOrchestrationOutputKeys:
         import train_rqkmeans
 
         config = OmegaConf.create({
-            "data": {"dataset": "amazon", "category": "beauty", "normalize_data": True},
+            "data": {"dataset": "amazon", "category": "beauty", "input_normalization": "center_l2"},
             "model": {"codebook_layers": 2, "codebook_size": 4, "n_iters": 5,
                       "normalize_residuals": False},
             "general": {"seed": 0, "save_model": False, "model_path": "",
@@ -57,7 +57,7 @@ class TestOrchestrationNoCollisionDuplicates:
         fake_embeddings = torch.randn(n_items, d)
 
         config = OmegaConf.create({
-            "data": {"dataset": "amazon", "category": "beauty", "normalize_data": True},
+            "data": {"dataset": "amazon", "category": "beauty", "input_normalization": "center_l2"},
             "model": {"codebook_layers": n_layers, "codebook_size": n_clusters,
                       "n_iters": 20, "normalize_residuals": False},
             "general": {"seed": 42, "save_model": False, "model_path": "",
@@ -86,7 +86,7 @@ class TestOrchestrationNoCollisionDuplicates:
         fake_embeddings = torch.randn(n_items, d)
 
         config = OmegaConf.create({
-            "data": {"dataset": "amazon", "category": "beauty", "normalize_data": True},
+            "data": {"dataset": "amazon", "category": "beauty", "input_normalization": "center_l2"},
             "model": {"codebook_layers": n_layers, "codebook_size": n_clusters,
                       "n_iters": 20, "normalize_residuals": False},
             "general": {"seed": 7, "save_model": False, "model_path": "",
@@ -117,7 +117,7 @@ class TestOrchestrationEvaluateBeforeResolve:
         fake_embeddings = torch.randn(n_items, d)
 
         config = OmegaConf.create({
-            "data": {"dataset": "amazon", "category": "beauty", "normalize_data": True},
+            "data": {"dataset": "amazon", "category": "beauty", "input_normalization": "center_l2"},
             "model": {"codebook_layers": 2, "codebook_size": 4, "n_iters": 5,
                       "normalize_residuals": False},
             "general": {"seed": 0, "save_model": False, "model_path": "",
@@ -162,7 +162,7 @@ class TestOrchestrationOutputShape:
         fake_embeddings = torch.randn(n_items, d)
 
         config = OmegaConf.create({
-            "data": {"dataset": "amazon", "category": "beauty", "normalize_data": True},
+            "data": {"dataset": "amazon", "category": "beauty", "input_normalization": "center_l2"},
             "model": {"codebook_layers": n_layers, "codebook_size": n_clusters,
                       "n_iters": 20, "normalize_residuals": False},
             "general": {"seed": 1, "save_model": False, "model_path": "",
@@ -193,7 +193,7 @@ class TestOrchestrationSaveModel:
         model_path = str(tmp_path / "rqkmeans.pt")
 
         config = OmegaConf.create({
-            "data": {"dataset": "amazon", "category": "beauty", "normalize_data": True},
+            "data": {"dataset": "amazon", "category": "beauty", "input_normalization": "center_l2"},
             "model": {"codebook_layers": n_layers, "codebook_size": n_clusters,
                       "n_iters": 10, "normalize_residuals": False},
             "general": {"seed": 3, "save_model": True, "model_path": model_path,

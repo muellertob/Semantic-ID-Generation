@@ -36,3 +36,19 @@ def test_rqvae_cal_differs_from_rqvae_only_in_the_option_and_its_paths(written_c
     assert set(old) == set(new)
     assert {key for key in old if old[key] != new[key]} == {
         "model.commit_all_levels", "general.model_path", "general.meta_json"}
+
+
+def test_rqvae_center_differs_from_rqvae_only_in_the_input_options_and_its_paths(written_config):
+    # centered input without the model-internal BatchNorm + L2 is the only change to the baseline
+    old, new = written_config("RQ_VAE"), written_config("RQ_VAE_center")
+    assert set(old) == set(new)
+    assert {key for key in old if old[key] != new[key]} == {
+        "data.input_normalization", "model.normalize_inputs", "general.model_path", "general.meta_json"}
+
+
+def test_rqkmeans_std_differs_from_rqkmeans_only_in_the_input_normalization_and_its_paths(written_config):
+    # RQ-KMeans also writes general.output_path (its SIDs folder is named after the variant)
+    old, new = written_config("RQ_KMeans"), written_config("RQ_KMeans_std")
+    assert set(old) == set(new)
+    assert {key for key in old if old[key] != new[key]} == {
+        "data.input_normalization", "general.model_path", "general.meta_json", "general.output_path"}
