@@ -25,6 +25,7 @@ def prepare_quantizer_task(exp, seed, dry_run):
     semids_output_path = os.path.join(OUTPUTS_DIR, f"{exp_name.lower()}_seed_{seed}", "semids.pt")
     quant_meta_json = os.path.join(EXPERIMENT_DIR, f"{exp_name.lower()}_seed_{seed}_quantizer_meta.json")
     quant_run_config = os.path.join(CONFIGS_DIR, f"{exp_name}_seed_{seed}_quantizer.yaml")
+    variant_overrides = exp.get("quant_overrides", {})  # config changes that define the variant
     
     if exp.get("is_rqkmeans"):
         overrides = {
@@ -36,7 +37,7 @@ def prepare_quantizer_task(exp, seed, dry_run):
         }
         if dry_run:
             overrides["model.n_iters"] = 2
-        prepare_run_config(exp["quant_config"], quant_run_config, overrides)
+        prepare_run_config(exp["quant_config"], quant_run_config, {**variant_overrides, **overrides})
         cmd = ["python", "main.py", "train-rqkmeans", "--config", quant_run_config]
         model_path = overrides["general.model_path"]
     else:
@@ -49,7 +50,7 @@ def prepare_quantizer_task(exp, seed, dry_run):
         if dry_run:
             overrides["train.num_epochs"] = 1
             overrides["general.use_wandb"] = False
-        prepare_run_config(exp["quant_config"], quant_run_config, overrides)
+        prepare_run_config(exp["quant_config"], quant_run_config, {**variant_overrides, **overrides})
         cmd = ["python", "main.py", "train-quantizer", "--config", quant_run_config]
         model_path = overrides["general.model_path"]
         
@@ -282,6 +283,140 @@ def write_experiment_summary(exp_name, runs):
                 
         f.write("\n---\n\n")
 
+# Previous Amazon Beauty Experiments (commented out for reference)
+# beauty_experiments = [
+#     {
+#         "name": "RQ_KMeans",
+#         "quant_config": "config/rq-kmeans/amazon_beauty_rqkmeans.yaml",
+#         "recommender_config": "config/recommender/amazon_beauty_grid.yaml",
+#         "is_rqkmeans": True,
+#         "codebook_size": 256,
+#     },
+#     {
+#         "name": "FSQ",
+#         "quant_config": "config/fsq/amazon_beauty.yaml",
+#         "recommender_config": "config/recommender/amazon_beauty_grid_fsq.yaml",
+#         "codebook_size": 288,
+#     },
+#     {
+#         "name": "Residual_FSQ_Simple_HighDim",
+#         "quant_config": "config/fsq/amazon_beauty_rfsq_simple_highdim.yaml",
+#         "recommender_config": "config/recommender/amazon_beauty_grid_fsq.yaml",
+#         "codebook_size": 288,
+#     },
+#     {
+#         "name": "Residual_FSQ_Simple_LowDim",
+#         "quant_config": "config/fsq/amazon_beauty_rfsq_simple_lowdim.yaml",
+#         "recommender_config": "config/recommender/amazon_beauty_grid_fsq.yaml",
+#         "codebook_size": 288,
+#     },
+#     {
+#         "name": "Residual_FSQ_Complex",
+#         "quant_config": "config/fsq/amazon_beauty_rfsq_complex.yaml",
+#         "recommender_config": "config/recommender/amazon_beauty_grid_fsq.yaml",
+#         "codebook_size": 288,
+#     },
+#     {
+#         "name": "RQ_VAE",
+#         "quant_config": "config/rq-vae/amazon_beauty_tiger.yaml",
+#         "recommender_config": "config/recommender/amazon_beauty_grid.yaml",
+#         "codebook_size": 256,
+#     }
+# ]
+
+# Amazon Toys Experiments
+# Stage 2 with TIGER's 100k-step budget and no early stopping (*_100k.yaml); the reported Toys runs used
+# amazon_toy_grid.yaml / amazon_toy_grid_fsq.yaml (early stopping, patience 15)
+LOO_EXPERIMENTS = [
+    {
+        "name": "RQ_KMeans",
+        "quant_config": "config/rq-kmeans/amazon_toy_rqkmeans.yaml",
+        "recommender_config": "config/recommender/amazon_toy_grid_100k.yaml",
+        "is_rqkmeans": True,
+        "codebook_size": 256,
+    },
+    {
+        "name": "FSQ",
+        "quant_config": "config/fsq/amazon_toy.yaml",
+        "recommender_config": "config/recommender/amazon_toy_grid_fsq_100k.yaml",
+        "codebook_size": 288,
+    },
+    {
+        "name": "Residual_FSQ_Simple_HighDim",
+        "quant_config": "config/fsq/amazon_toy_rfsq_simple_highdim.yaml",
+        "recommender_config": "config/recommender/amazon_toy_grid_fsq_100k.yaml",
+        "codebook_size": 288,
+    },
+    {
+        "name": "Residual_FSQ_Simple_LowDim",
+        "quant_config": "config/fsq/amazon_toy_rfsq_simple_lowdim.yaml",
+        "recommender_config": "config/recommender/amazon_toy_grid_fsq_100k.yaml",
+        "codebook_size": 288,
+    },
+    {
+        "name": "Residual_FSQ_Complex",
+        "quant_config": "config/fsq/amazon_toy_rfsq_complex.yaml",
+        "recommender_config": "config/recommender/amazon_toy_grid_fsq_100k.yaml",
+        "codebook_size": 288,
+    },
+    {
+        "name": "RQ_VAE",
+        "quant_config": "config/rq-vae/amazon_toy_tiger.yaml",
+        "recommender_config": "config/recommender/amazon_toy_grid_100k.yaml",
+        "codebook_size": 256,
+    }
+]
+
+# Amazon Toys Experiments under the global temporal split (--protocol gts): quantizers fit on the stage-1
+# items, Stage 2 with the 1471-epoch (about 100k steps) budget, no early stopping, best-NDCG@10 checkpoint
+GTS_EXPERIMENTS = [
+    {
+        "name": "RQ_KMeans",
+        "quant_config": "config/rq-kmeans/amazon_toy_rqkmeans_gts.yaml",
+        "recommender_config": "config/recommender/amazon_toy_grid_gts.yaml",
+        "is_rqkmeans": True,
+        "codebook_size": 256,
+    },
+    {
+        "name": "FSQ",
+        "quant_config": "config/fsq/amazon_toy_gts.yaml",
+        "recommender_config": "config/recommender/amazon_toy_grid_fsq_gts.yaml",
+        "codebook_size": 288,
+    },
+    {
+        "name": "Residual_FSQ_Simple_HighDim",
+        "quant_config": "config/fsq/amazon_toy_rfsq_simple_highdim_gts.yaml",
+        "recommender_config": "config/recommender/amazon_toy_grid_fsq_gts.yaml",
+        "codebook_size": 288,
+    },
+    {
+        "name": "Residual_FSQ_Simple_LowDim",
+        "quant_config": "config/fsq/amazon_toy_rfsq_simple_lowdim_gts.yaml",
+        "recommender_config": "config/recommender/amazon_toy_grid_fsq_gts.yaml",
+        "codebook_size": 288,
+    },
+    {
+        "name": "Residual_FSQ_Complex",
+        "quant_config": "config/fsq/amazon_toy_rfsq_complex_gts.yaml",
+        "recommender_config": "config/recommender/amazon_toy_grid_fsq_gts.yaml",
+        "codebook_size": 288,
+    },
+    {
+        "name": "RQ_VAE",
+        "quant_config": "config/rq-vae/amazon_toy_tiger_gts.yaml",
+        "recommender_config": "config/recommender/amazon_toy_grid_gts.yaml",
+        "codebook_size": 256,
+    },
+    {
+        "name": "RQ_VAE_cal",  # every level's commitment term reaches the encoder
+        "quant_config": "config/rq-vae/amazon_toy_tiger_gts.yaml",
+        "quant_overrides": {"model.commit_all_levels": True},
+        "recommender_config": "config/recommender/amazon_toy_grid_gts.yaml",
+        "codebook_size": 256,
+    }
+]
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="Run Semantic ID experiments in an overlapping parallel pipeline")
@@ -312,133 +447,7 @@ def main():
     gpu_quant = args.gpu_quantizer
     parallel = not args.no_parallel and reuse_dir is None
     
-    # Previous Amazon Beauty Experiments (commented out for reference)
-    # beauty_experiments = [
-    #     {
-    #         "name": "RQ_KMeans",
-    #         "quant_config": "config/rq-kmeans/amazon_beauty_rqkmeans.yaml",
-    #         "recommender_config": "config/recommender/amazon_beauty_grid.yaml",
-    #         "is_rqkmeans": True,
-    #         "codebook_size": 256,
-    #     },
-    #     {
-    #         "name": "FSQ",
-    #         "quant_config": "config/fsq/amazon_beauty.yaml",
-    #         "recommender_config": "config/recommender/amazon_beauty_grid_fsq.yaml",
-    #         "codebook_size": 288,
-    #     },
-    #     {
-    #         "name": "Residual_FSQ_Simple_HighDim",
-    #         "quant_config": "config/fsq/amazon_beauty_rfsq_simple_highdim.yaml",
-    #         "recommender_config": "config/recommender/amazon_beauty_grid_fsq.yaml",
-    #         "codebook_size": 288,
-    #     },
-    #     {
-    #         "name": "Residual_FSQ_Simple_LowDim",
-    #         "quant_config": "config/fsq/amazon_beauty_rfsq_simple_lowdim.yaml",
-    #         "recommender_config": "config/recommender/amazon_beauty_grid_fsq.yaml",
-    #         "codebook_size": 288,
-    #     },
-    #     {
-    #         "name": "Residual_FSQ_Complex",
-    #         "quant_config": "config/fsq/amazon_beauty_rfsq_complex.yaml",
-    #         "recommender_config": "config/recommender/amazon_beauty_grid_fsq.yaml",
-    #         "codebook_size": 288,
-    #     },
-    #     {
-    #         "name": "RQ_VAE",
-    #         "quant_config": "config/rq-vae/amazon_beauty_tiger.yaml",
-    #         "recommender_config": "config/recommender/amazon_beauty_grid.yaml",
-    #         "codebook_size": 256,
-    #     }
-    # ]
-
-    # Amazon Toys Experiments
-    # Stage 2 with TIGER's 100k-step budget and no early stopping (*_100k.yaml); the reported Toys runs used
-    # amazon_toy_grid.yaml / amazon_toy_grid_fsq.yaml (early stopping, patience 15)
-    experiments = [
-        {
-            "name": "RQ_KMeans",
-            "quant_config": "config/rq-kmeans/amazon_toy_rqkmeans.yaml",
-            "recommender_config": "config/recommender/amazon_toy_grid_100k.yaml",
-            "is_rqkmeans": True,
-            "codebook_size": 256,
-        },
-        {
-            "name": "FSQ",
-            "quant_config": "config/fsq/amazon_toy.yaml",
-            "recommender_config": "config/recommender/amazon_toy_grid_fsq_100k.yaml",
-            "codebook_size": 288,
-        },
-        {
-            "name": "Residual_FSQ_Simple_HighDim",
-            "quant_config": "config/fsq/amazon_toy_rfsq_simple_highdim.yaml",
-            "recommender_config": "config/recommender/amazon_toy_grid_fsq_100k.yaml",
-            "codebook_size": 288,
-        },
-        {
-            "name": "Residual_FSQ_Simple_LowDim",
-            "quant_config": "config/fsq/amazon_toy_rfsq_simple_lowdim.yaml",
-            "recommender_config": "config/recommender/amazon_toy_grid_fsq_100k.yaml",
-            "codebook_size": 288,
-        },
-        {
-            "name": "Residual_FSQ_Complex",
-            "quant_config": "config/fsq/amazon_toy_rfsq_complex.yaml",
-            "recommender_config": "config/recommender/amazon_toy_grid_fsq_100k.yaml",
-            "codebook_size": 288,
-        },
-        {
-            "name": "RQ_VAE",
-            "quant_config": "config/rq-vae/amazon_toy_tiger.yaml",
-            "recommender_config": "config/recommender/amazon_toy_grid_100k.yaml",
-            "codebook_size": 256,
-        }
-    ]
-    
-    # Amazon Toys Experiments under the global temporal split (--protocol gts): quantizers fit on the stage-1
-    # items, Stage 2 with the 1471-epoch (about 100k steps) budget, no early stopping, best-NDCG@10 checkpoint
-    gts_experiments = [
-        {
-            "name": "RQ_KMeans",
-            "quant_config": "config/rq-kmeans/amazon_toy_rqkmeans_gts.yaml",
-            "recommender_config": "config/recommender/amazon_toy_grid_gts.yaml",
-            "is_rqkmeans": True,
-            "codebook_size": 256,
-        },
-        {
-            "name": "FSQ",
-            "quant_config": "config/fsq/amazon_toy_gts.yaml",
-            "recommender_config": "config/recommender/amazon_toy_grid_fsq_gts.yaml",
-            "codebook_size": 288,
-        },
-        {
-            "name": "Residual_FSQ_Simple_HighDim",
-            "quant_config": "config/fsq/amazon_toy_rfsq_simple_highdim_gts.yaml",
-            "recommender_config": "config/recommender/amazon_toy_grid_fsq_gts.yaml",
-            "codebook_size": 288,
-        },
-        {
-            "name": "Residual_FSQ_Simple_LowDim",
-            "quant_config": "config/fsq/amazon_toy_rfsq_simple_lowdim_gts.yaml",
-            "recommender_config": "config/recommender/amazon_toy_grid_fsq_gts.yaml",
-            "codebook_size": 288,
-        },
-        {
-            "name": "Residual_FSQ_Complex",
-            "quant_config": "config/fsq/amazon_toy_rfsq_complex_gts.yaml",
-            "recommender_config": "config/recommender/amazon_toy_grid_fsq_gts.yaml",
-            "codebook_size": 288,
-        },
-        {
-            "name": "RQ_VAE",
-            "quant_config": "config/rq-vae/amazon_toy_tiger_gts.yaml",
-            "recommender_config": "config/recommender/amazon_toy_grid_gts.yaml",
-            "codebook_size": 256,
-        }
-    ]
-    if args.protocol == "gts":
-        experiments = gts_experiments
+    experiments = GTS_EXPERIMENTS if args.protocol == "gts" else LOO_EXPERIMENTS
     
     # restrict to the requested variants (names are matched case-insensitively)
     if args.variants is not None:
