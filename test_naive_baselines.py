@@ -10,7 +10,8 @@ from tqdm import tqdm
 
 from data.loader import load_amazon_sequences
 from data.protocols import get_split_config
-from data.sequence import SemanticIDSequenceDataset, collate_fn
+from data.semids_checks import check_semids
+from data.sequence import SemanticIDSequenceDataset, collate_fn, get_max_history_len
 from utils.metrics import MetricAccumulator
 from utils.seed import set_seed, seed_worker, get_seeded_generator
 
@@ -19,7 +20,9 @@ logger = logging.getLogger(__name__)
 
 def compute_popularity(history_data, num_items):
     """
-    Computes item popularity from the training set.
+    Computes item popularity from the training rows (under the global temporal split: the
+    interactions up to t_val of users with at least two of them, since a train row needs an
+    input and a target).
     
     Args:
         history_data: the loaded sequences dict containing 'train', 'eval', 'test'
@@ -58,6 +61,34 @@ def compute_popularity(history_data, num_items):
 
     return sorted_items
 
+def log_results(title, report, k_list, protocol):
+    """
+    Logs one baseline's results. leave-one-out: row averages (one row per user).
+    global temporal split (gts): per-user averages, like test_seq2seq.py (row averages as 'per target').
+    """
+    if protocol == 'gts':
+        recall, ndcg, hierarchical = report['recall_user'], report['ndcg_user'], report['hierarchical_user']
+    else:
+        recall, ndcg, hierarchical = report['recall'], report['ndcg'], report['hierarchical']
+    
+    logger.info("="*40)
+    logger.info(title)
+    logger.info("="*40)
+    for k in k_list:
+        logger.info(f"Recall@{k}: {recall[k]:.4f}")
+        logger.info(f"NDCG@{k}:   {ndcg[k]:.4f}")
+    logger.info("Hierarchical Results:")
+    for key, val in hierarchical.items():
+        logger.info(f"{key}: {val:.4f}")
+    
+    if protocol == 'gts':
+        logger.info(f"Per-target (row-averaged) Recall: { {k: round(v, 4) for k, v in report['recall'].items()} } | NDCG: { {k: round(v, 4) for k, v in report['ndcg'].items()} }")
+        logger.info(f"Last-target Recall: { {k: round(v, 4) for k, v in report['recall_last'].items()} } | NDCG: { {k: round(v, 4) for k, v in report['ndcg_last'].items()} }")
+        logger.info(f"Counts: num_users={report['num_users']}, num_rows={report['total_samples']}")
+        if 'seen_at_k' in report:
+            logger.info(f"Seen items in top-k slots: {report['seen_at_k']} | users with a seen item in top-k: {report.get('users_with_seen_at_k')}")
+    logger.info("\n")
+
 def run_baselines(config_path, semantic_ids_path, k_list=[5, 10, 20]):
     config = OmegaConf.load(config_path)
     
@@ -73,8 +104,11 @@ def run_baselines(config_path, semantic_ids_path, k_list=[5, 10, 20]):
     num_items = semantic_ids.shape[0]
     tuple_size = semantic_ids.shape[1]
     
-    logger.info("Loading User History Data (Test Split)...")
-    sequences, num_users, loaded_num_items = load_amazon_sequences(config.data.category, get_split_config(config))
+    split_config = get_split_config(config)
+    protocol = split_config.protocol
+    logger.info(f"Loading User History Data (Test Split, protocol={protocol})...")
+    sequences, num_users, loaded_num_items = load_amazon_sequences(config.data.category, split_config)
+    check_semids(semids_data, config, loaded_num_items)
     
     # compute most popular items from train split
     popular_item_ids = compute_popularity(sequences, num_items)
@@ -90,7 +124,7 @@ def run_baselines(config_path, semantic_ids_path, k_list=[5, 10, 20]):
         mode='test'
     )
     
-    test_collate_fn = partial(collate_fn, max_len=config.seq2seq.get('max_history_len', 20))
+    test_collate_fn = partial(collate_fn, max_len=get_max_history_len(config))
     
     g = get_seeded_generator(seed)
     test_loader = DataLoader(
@@ -119,32 +153,20 @@ def run_baselines(config_path, semantic_ids_path, k_list=[5, 10, 20]):
         # expand [max_k, tuple_size] to [Batch, max_k, tuple_size]
         mostpop_predictions = top_k_popular_semids.unsqueeze(0).expand(batch_size, -1, -1)
         
-        random_accumulator.update(random_predictions, target_tuples)
-        mostpop_accumulator.update(mostpop_predictions, target_tuples)
+        # user ids, seen items and last-target flags only add the per-user / last / seen outputs
+        extra = dict(
+            user_ids=batch['user_ids'],
+            seen_tuples=batch.get('seen_tuples'),
+            is_last=batch.get('is_last'),
+        )
+        random_accumulator.update(random_predictions, target_tuples, **extra)
+        mostpop_accumulator.update(mostpop_predictions, target_tuples, **extra)
         
     random_metrics = random_accumulator.compute()
     mostpop_metrics = mostpop_accumulator.compute()
     
-    logger.info("="*40)
-    logger.info("RANDOM BASELINE RESULTS")
-    logger.info("="*40)
-    for k in k_list:
-        logger.info(f"Recall@{k}: {random_metrics['recall'][k]:.4f}")
-        logger.info(f"NDCG@{k}:   {random_metrics['ndcg'][k]:.4f}")
-    logger.info("Hierarchical Results:")
-    for key, val in random_metrics['hierarchical'].items():
-        logger.info(f"{key}: {val:.4f}")
-    logger.info("\n")
-        
-    logger.info("="*40)
-    logger.info("MOST-POPULAR BASELINE RESULTS")
-    logger.info("="*40)
-    for k in k_list:
-        logger.info(f"Recall@{k}: {mostpop_metrics['recall'][k]:.4f}")
-        logger.info(f"NDCG@{k}:   {mostpop_metrics['ndcg'][k]:.4f}")
-    logger.info("Hierarchical Results:")
-    for key, val in mostpop_metrics['hierarchical'].items():
-        logger.info(f"{key}: {val:.4f}")
+    log_results("RANDOM BASELINE RESULTS", random_metrics, k_list, protocol)
+    log_results("MOST-POPULAR BASELINE RESULTS", mostpop_metrics, k_list, protocol)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Test Naive Baselines")

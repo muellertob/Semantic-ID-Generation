@@ -7,19 +7,31 @@ Verifies:
   - warmup_steps_override produces a decaying LR after warmup
   - Config overrides are respected
   - eval_delay_epochs skips retrieval metrics calculation during warmup phase
+  - the seq2seq.checkpoint_metric block ({metric, k}) selects the metric for checkpointing / early stopping
+    (default recall at k=5) and resuming restores the best value of that metric
 
 Fixtures (seq2seq_config, semids_path, mock_seq2seq_model, mock_amazon_sequences)
 are defined in tests/integration/conftest.py.
 """
 import math
+import pytest
 import torch
 import os
 from unittest.mock import patch
+from omegaconf import OmegaConf
 
 
 FAKE_RECALL = {5: 1.0, 10: 1.0}
 FAKE_NDCG   = {5: 0.5,  10: 0.3}
 FAKE_HIER   = {}
+
+
+def _report(recall=FAKE_RECALL, ndcg=FAKE_NDCG, hier=FAKE_HIER):
+    """compute_metrics returns the full MetricAccumulator report."""
+    return {"recall": recall, "ndcg": ndcg, "hierarchical": hier, "total_samples": 2}
+
+
+FAKE_REPORT = _report()
 
 
 def _run_and_save_checkpoint(tmp_path, config_path, semids_path):
@@ -43,7 +55,7 @@ def _run_and_save_checkpoint(tmp_path, config_path, semids_path):
                 "optimizer_state_dict": opt.state_dict(),
                 "scheduler_state_dict": sched.state_dict() if sched else None,
                 "scaler_state_dict": scaler.state_dict() if scaler else None,
-                "recall@5": val,
+                metric_name: val,
             }, checkpoint_path)
         mock_save.side_effect = _write
         run_training(config_path, semids_path)
@@ -54,7 +66,7 @@ def _run_and_save_checkpoint(tmp_path, config_path, semids_path):
 class TestCheckpointSaved:
 
     @patch("train_seq2seq.compute_metrics",
-           return_value=(FAKE_RECALL, FAKE_NDCG, FAKE_HIER))
+           return_value=FAKE_REPORT)
     @patch("train_seq2seq.load_amazon_sequences")
     @patch("train_seq2seq.TigerSeq2Seq")
     def test_checkpoint_created_on_recall_improvement(
@@ -77,7 +89,7 @@ class TestCheckpointSaved:
                     "optimizer_state_dict": opt.state_dict(),
                     "scheduler_state_dict": sched.state_dict() if sched else None,
                     "scaler_state_dict": scaler.state_dict() if scaler else None,
-                    "recall@5": val,
+                    metric_name: val,
                 }, ckpt_path)
             mock_save.side_effect = _write
             run_training(config_path, semids_path)
@@ -95,7 +107,7 @@ class TestCheckpointSaved:
         assert metric_name_saved == "recall@5"
 
     @patch("train_seq2seq.compute_metrics",
-           return_value=(FAKE_RECALL, FAKE_NDCG, FAKE_HIER))
+           return_value=FAKE_REPORT)
     @patch("train_seq2seq.load_amazon_sequences")
     @patch("train_seq2seq.TigerSeq2Seq")
     def test_no_checkpoint_when_save_model_false(
@@ -120,7 +132,7 @@ class TestCheckpointSaved:
 class TestResumeTraining:
 
     @patch("train_seq2seq.compute_metrics",
-           return_value=(FAKE_RECALL, FAKE_NDCG, FAKE_HIER))
+           return_value=FAKE_REPORT)
     @patch("train_seq2seq.load_amazon_sequences")
     @patch("train_seq2seq.TigerSeq2Seq")
     def test_resume_loads_optimizer_state(
@@ -165,14 +177,14 @@ class TestResumeTraining:
 
         # first run with high recall (1.0) so a checkpoint is written.
         with patch("train_seq2seq.compute_metrics",
-                   return_value=(FAKE_RECALL, FAKE_NDCG, FAKE_HIER)):
+                   return_value=FAKE_REPORT):
             checkpoint_path = _run_and_save_checkpoint(tmp_path, config_path, semids_path)
 
         assert os.path.exists(checkpoint_path), "Precondition: checkpoint must exist"
 
         # resume with low recall (0.0 < saved best 1.0) → no new checkpoint.
         with patch("train_seq2seq.compute_metrics",
-                   return_value=({5: 0.0, 10: 0.0}, FAKE_NDCG, FAKE_HIER)), \
+                   return_value=_report(recall={5: 0.0, 10: 0.0})), \
              patch("train_seq2seq.save_checkpoint") as mock_save:
             run_training(config_path, semids_path, resume_path=checkpoint_path)
             assert not mock_save.called, (
@@ -183,7 +195,7 @@ class TestResumeTraining:
 class TestWarmupOverride:
 
     @patch("train_seq2seq.compute_metrics",
-           return_value=(FAKE_RECALL, FAKE_NDCG, FAKE_HIER))
+           return_value=FAKE_REPORT)
     @patch("train_seq2seq.load_amazon_sequences")
     @patch("train_seq2seq.TigerSeq2Seq")
     def test_warmup_override_produces_decaying_lr(
@@ -241,7 +253,7 @@ class TestWarmupOverride:
 class TestConfigOverrides:
 
     @patch("train_seq2seq.compute_metrics",
-           return_value=(FAKE_RECALL, FAKE_NDCG, FAKE_HIER))
+           return_value=FAKE_REPORT)
     @patch("train_seq2seq.load_amazon_sequences")
     @patch("train_seq2seq.TigerSeq2Seq")
     def test_overrides_respected(
@@ -289,7 +301,7 @@ class TestEvalDelayEpochs:
             run_training(config_path, semids_path, overrides=overrides)
             assert not mock_compute.called, "compute_metrics should not be called when delay is equal to or greater than num_epochs"
 
-    @patch("train_seq2seq.compute_metrics", return_value=(FAKE_RECALL, FAKE_NDCG, FAKE_HIER))
+    @patch("train_seq2seq.compute_metrics", return_value=FAKE_REPORT)
     @patch("train_seq2seq.load_amazon_sequences")
     @patch("train_seq2seq.TigerSeq2Seq")
     def test_eval_delay_epochs_allows_metrics_after_delay(
@@ -305,3 +317,171 @@ class TestEvalDelayEpochs:
         overrides = ["seq2seq.num_epochs=2", "seq2seq.eval_delay_epochs=1", "seq2seq.eval_epoch_interval=1"]
         run_training(config_path, semids_path, overrides=overrides)
         assert mock_compute.call_count == 1, "compute_metrics should be called exactly once (for epoch 2)"
+
+
+def _write_resume_checkpoint(path, model_state_dict, metric_key, metric_value):
+    """A resumable checkpoint that stores the metric under metric_key, as save_checkpoint does."""
+    optimizer = torch.optim.Adam([torch.nn.Parameter(torch.randn(1))])
+    torch.optim.lr_scheduler.LambdaLR(optimizer, lambda step: 1.0)  # adds 'initial_lr' to the param groups
+    torch.save({
+        "epoch": 0,
+        "model_state_dict": model_state_dict,
+        "optimizer_state_dict": optimizer.state_dict(),
+        "scheduler_state_dict": None,
+        "scaler_state_dict": None,
+        metric_key: metric_value,
+    }, path)
+
+
+class TestCheckpointMetric:
+
+    def test_save_checkpoint_stores_metric_under_its_name(self, tmp_path):
+        """save_checkpoint stores the metric only under its own key (e.g. 'ndcg@10')."""
+        from train_seq2seq import save_checkpoint
+        model = torch.nn.Linear(2, 2)
+        optimizer = torch.optim.Adam(model.parameters())
+        path = str(tmp_path / "ckpt.pt")
+        save_checkpoint(model, optimizer, None, None, 3, 0.25, path, "ndcg@10")
+        ckpt = torch.load(path, weights_only=False)
+        assert ckpt["ndcg@10"] == 0.25
+        assert ckpt["epoch"] == 3
+        assert "metric_name" not in ckpt
+        assert "metric_value" not in ckpt
+
+    @pytest.mark.parametrize("block, expected", [
+        (None, ("recall", 5)),
+        ({"metric": "ndcg", "k": 10}, ("ndcg", 10)),
+        ({"k": 10}, ("recall", 10)),
+        ({"metric": "ndcg"}, ("ndcg", 5)),
+    ])
+    def test_get_checkpoint_metric(self, block, expected):
+        from train_seq2seq import get_checkpoint_metric
+        seq2seq = {} if block is None else {"checkpoint_metric": block}
+        assert get_checkpoint_metric(OmegaConf.create({"seq2seq": seq2seq})) == expected
+
+    @pytest.mark.parametrize("bad, message", [
+        ({"metric": "mrr", "k": 5}, "metric must be"),
+        ({"metric": "NDCG", "k": 10}, "metric must be"),
+        ({"metric": "ndcg", "k": 20}, "k must be"),
+        ({"metric": "ndcg", "k": "10"}, "k must be"),
+        ({"metric": "recall", "k": True}, "k must be"),
+        ("ndcg@10", "must be a block"),
+    ])
+    def test_get_checkpoint_metric_rejects_invalid(self, bad, message):
+        from train_seq2seq import get_checkpoint_metric
+        with pytest.raises(ValueError, match=message):
+            get_checkpoint_metric(OmegaConf.create({"seq2seq": {"checkpoint_metric": bad}}))
+
+    @patch("train_seq2seq.compute_metrics")
+    @patch("train_seq2seq.load_amazon_sequences")
+    @patch("train_seq2seq.TigerSeq2Seq")
+    def test_unvalidated_k_fails_before_training(
+            self, mock_model_class, mock_load_data, mock_compute,
+            seq2seq_config, semids_path, mock_seq2seq_model, mock_amazon_sequences):
+        """checkpoint_metric k=20 is not a validation k: run_training raises at startup."""
+        from train_seq2seq import run_training
+
+        mock_model_class.return_value = mock_seq2seq_model
+        mock_load_data.return_value = (mock_amazon_sequences, 10, 20)
+        _, config_path = seq2seq_config
+
+        with pytest.raises(ValueError, match="k must be"):
+            run_training(config_path, semids_path, overrides=["seq2seq.checkpoint_metric.metric=ndcg", "seq2seq.checkpoint_metric.k=20"])
+        assert not mock_compute.called
+
+    @patch("train_seq2seq.compute_metrics", return_value=FAKE_REPORT)
+    @patch("train_seq2seq.load_amazon_sequences")
+    @patch("train_seq2seq.TigerSeq2Seq")
+    def test_ndcg_metric_selects_checkpoint_value(
+            self, mock_model_class, mock_load_data, _,
+            tmp_path, seq2seq_config, semids_path, mock_seq2seq_model, mock_amazon_sequences):
+        """checkpoint_metric {metric: ndcg, k: 10} saves the NDCG@10 value under the name 'ndcg@10'."""
+        from train_seq2seq import run_training
+
+        mock_model_class.return_value = mock_seq2seq_model
+        mock_load_data.return_value = (mock_amazon_sequences, 10, 20)
+        _, config_path = seq2seq_config
+
+        with patch("train_seq2seq.save_checkpoint") as mock_save:
+            run_training(config_path, semids_path, overrides=["seq2seq.checkpoint_metric.metric=ndcg", "seq2seq.checkpoint_metric.k=10"])
+
+        assert mock_save.called
+        _, _, _, _, _, value_saved, _, metric_name_saved = mock_save.call_args.args
+        assert metric_name_saved == "ndcg@10"
+        assert value_saved == FAKE_NDCG[10]
+
+    @patch("train_seq2seq.load_amazon_sequences")
+    @patch("train_seq2seq.TigerSeq2Seq")
+    def test_early_stopping_counts_chosen_metric(
+            self, mock_model_class, mock_load_data,
+            seq2seq_config, semids_path, mock_seq2seq_model, mock_amazon_sequences):
+        """Recall@5 keeps improving but NDCG@10 does not: with ndcg@10 training stops early."""
+        from train_seq2seq import run_training
+
+        mock_model_class.return_value = mock_seq2seq_model
+        mock_load_data.return_value = (mock_amazon_sequences, 10, 20)
+        _, config_path = seq2seq_config
+
+        reports = [_report(recall={5: 0.1 * (i + 1), 10: 0.5}, ndcg={5: 0.1, 10: 0.2}) for i in range(4)]
+        overrides = ["seq2seq.num_epochs=4", "seq2seq.eval_epoch_interval=1",
+                     "seq2seq.early_stopping_patience=1", "seq2seq.checkpoint_metric.metric=ndcg", "seq2seq.checkpoint_metric.k=10"]
+        with patch("train_seq2seq.compute_metrics", side_effect=reports) as mock_compute, \
+             patch("train_seq2seq.save_checkpoint"):
+            run_training(config_path, semids_path, overrides=overrides)
+        # evaluation 1 improves (0 -> 0.2), evaluation 2 does not -> stop after 2 evaluations
+        assert mock_compute.call_count == 2
+
+        with patch("train_seq2seq.compute_metrics", side_effect=reports) as mock_compute, \
+             patch("train_seq2seq.save_checkpoint"):
+            run_training(config_path, semids_path,
+                         overrides=overrides[:-2] + ["seq2seq.checkpoint_metric.metric=recall", "seq2seq.checkpoint_metric.k=5"])
+        assert mock_compute.call_count == 4
+
+    @patch("train_seq2seq.compute_metrics", return_value=FAKE_REPORT)
+    @patch("train_seq2seq.load_amazon_sequences")
+    @patch("train_seq2seq.TigerSeq2Seq")
+    def test_resume_restores_best_recall(
+            self, mock_model_class, mock_load_data, _,
+            tmp_path, seq2seq_config, semids_path, mock_seq2seq_model, mock_amazon_sequences):
+        """A checkpoint with a 'recall@5' key restores the best recall@5."""
+        from train_seq2seq import run_training
+
+        mock_model_class.return_value = mock_seq2seq_model
+        mock_load_data.return_value = (mock_amazon_sequences, 10, 20)
+        _, config_path = seq2seq_config
+
+        ckpt_path = str(tmp_path / "recall.pt")
+        # 5.0 is above any recall the mocked evaluation returns
+        _write_resume_checkpoint(ckpt_path, mock_seq2seq_model.state_dict.return_value, "recall@5", 5.0)
+
+        with patch("train_seq2seq.save_checkpoint") as mock_save:
+            run_training(config_path, semids_path, resume_path=ckpt_path)
+            assert not mock_save.called, "best recall@5 from the checkpoint must be restored"
+
+        # resuming with another metric: the stored recall@5 does not apply, so the best is reset to 0
+        with patch("train_seq2seq.save_checkpoint") as mock_save:
+            run_training(config_path, semids_path, resume_path=ckpt_path,
+                         overrides=["seq2seq.checkpoint_metric.metric=ndcg", "seq2seq.checkpoint_metric.k=10"])
+            assert mock_save.called
+
+    @patch("train_seq2seq.compute_metrics", return_value=FAKE_REPORT)
+    @patch("train_seq2seq.load_amazon_sequences")
+    @patch("train_seq2seq.TigerSeq2Seq")
+    def test_resume_restores_best_value_from_ndcg_key(
+            self, mock_model_class, mock_load_data, _,
+            tmp_path, seq2seq_config, semids_path, mock_seq2seq_model, mock_amazon_sequences):
+        """checkpoint_metric {metric: ndcg, k: 10} resumes from the checkpoint key 'ndcg@10' and restores its best value."""
+        from train_seq2seq import run_training
+
+        mock_model_class.return_value = mock_seq2seq_model
+        mock_load_data.return_value = (mock_amazon_sequences, 10, 20)
+        _, config_path = seq2seq_config
+
+        ckpt_path = str(tmp_path / "ndcg.pt")
+        # 5.0 is above any NDCG the mocked evaluation returns
+        _write_resume_checkpoint(ckpt_path, mock_seq2seq_model.state_dict.return_value, "ndcg@10", 5.0)
+
+        with patch("train_seq2seq.save_checkpoint") as mock_save:
+            run_training(config_path, semids_path, resume_path=ckpt_path,
+                         overrides=["seq2seq.checkpoint_metric.metric=ndcg", "seq2seq.checkpoint_metric.k=10"])
+            assert not mock_save.called, "best ndcg@10 from the checkpoint must be restored"

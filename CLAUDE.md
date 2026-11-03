@@ -117,7 +117,7 @@ Tests are managed using `pytest`. Configuration options are defined in `pyprojec
     - `model.py`: `SASRec` decoder-only Transformer.
 - **`schemas/`**: Typed output schemas (`vae.py`: `VaeOutput`; `quantization.py`: `QuantizeOutput`, `QuantizeForwardMode`, `QuantizeDistance`).
 - **`plotting/`**: Plotting utilities (`plot.py`).
-- **`data/`**: Data loading and preprocessing: `amazon_data.py` (`AmazonReviews`: item features and embeddings), `amazon_interactions.py` (reader of the P5 interaction files), `protocols.py` (split protocols, `SplitConfig`, SASRec protocol guard), `split_cache.py` (split cache), `sequence.py` (datasets and collate functions), `loader.py`, `factory.py`, `ml1m.py`, `schemas.py`, `preprocessing.py`.
+- **`data/`**: Data loading and preprocessing: `amazon_data.py` (`AmazonReviews`: item features and embeddings), `amazon_interactions.py` (reader of the P5 interaction files), `protocols.py` (split protocols, `SplitConfig`, SASRec protocol guard), `semids_checks.py` (checks that a semids file fits the dataset and split protocol of a run), `split_cache.py` (split cache), `sequence.py` (datasets and collate functions), `loader.py`, `factory.py`, `ml1m.py`, `schemas.py`, `preprocessing.py`.
 - **`utils/`**: Helper scripts (`wandb.py`, `metrics.py`, `model_id_generation.py`, `sid_evaluation.py`, `seed.py`: `set_seed` for reproducible runs).
 - **`tests/`**: Unit and integration tests (`tests/unit/`, `tests/integration/`).
 - **`config/`**: YAML configuration files.

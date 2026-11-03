@@ -3,7 +3,7 @@ import argparse
 import torch
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from omegaconf import OmegaConf
+from omegaconf import OmegaConf, DictConfig
 from tqdm import tqdm
 import wandb
 import os
@@ -14,7 +14,8 @@ import uuid
 from modules.recommender import TigerSeq2Seq
 from data.loader import load_amazon_sequences
 from data.protocols import get_split_config
-from data.sequence import SemanticIDSequenceDataset, collate_fn, collate_fn_with_augmentation
+from data.semids_checks import check_semids
+from data.sequence import SemanticIDSequenceDataset, collate_fn, collate_fn_with_augmentation, get_max_history_len
 from utils.wandb import wandb_init, get_run_name, log_model_artifact
 from utils.model_id_generation import generate_model_id
 from utils.metrics import MetricAccumulator
@@ -28,6 +29,8 @@ if torch.cuda.is_available():
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
 
+VALIDATION_K_LIST = [5, 10]  # k values of the validation retrieval metrics; checkpoint_metric must use one of them
+
 def save_checkpoint(model, optimizer, scheduler, scaler, epoch, metric_val, path, metric_name="recall@5"):
     raw_model = getattr(model, '_orig_mod', model)
     torch.save({
@@ -38,6 +41,24 @@ def save_checkpoint(model, optimizer, scheduler, scaler, epoch, metric_val, path
         'scaler_state_dict': scaler.state_dict() if scaler else None,
         metric_name: metric_val,
     }, path)
+
+def get_checkpoint_metric(config):
+    """
+    Reads the optional seq2seq.checkpoint_metric block: the validation metric that selects the
+    checkpoint and drives early stopping.
+
+    metric: 'recall' or 'ndcg' (default 'recall'); k: one of VALIDATION_K_LIST (default 5).
+    Returns (metric, k); raises ValueError for other values.
+    """
+    block = config.seq2seq.get('checkpoint_metric', None) or {}
+    if not isinstance(block, (dict, DictConfig)):
+        raise ValueError(f"seq2seq.checkpoint_metric must be a block with 'metric' and 'k', got {block!r}")
+    metric, k = block.get('metric', 'recall'), block.get('k', 5)
+    if metric not in ('recall', 'ndcg'):
+        raise ValueError(f"seq2seq.checkpoint_metric.metric must be 'recall' or 'ndcg', got {metric!r}")
+    if isinstance(k, bool) or k not in VALIDATION_K_LIST:
+        raise ValueError(f"seq2seq.checkpoint_metric.k must be one of {VALIDATION_K_LIST}, got {k!r}")
+    return metric, k
 
 def evaluate_loss(model, dataloader, device):
     """
@@ -87,15 +108,22 @@ def evaluate_loss(model, dataloader, device):
 def compute_metrics(model, dataloader, device, k_list=[5, 10]):
     """
     Compute retrieval metrics using Beam Search and MetricAccumulator.
+
+    Returns the full report of MetricAccumulator.compute(): recall, ndcg, hierarchical,
+    total_samples and, if the batches carry the fields, the per-user, last-target and
+    seen-item metrics.
     """
     model.eval()
-    accumulator = MetricAccumulator(k_list=k_list)
+    # one hierarchical slice per SID column (item_offsets has one entry per column)
+    accumulator = MetricAccumulator(k_list=k_list, num_layers=model.item_offsets.numel())
     
     with torch.no_grad():
         for batch in tqdm(dataloader, desc="Computing Metrics"):
             history_tuples = batch['history_tuples'].to(device)
             target_tuples = batch['target_tuples'].to(device)
             user_ids = batch['user_ids'].to(device)
+            seen_tuples = batch['seen_tuples'].to(device) if 'seen_tuples' in batch else None
+            is_last = batch['is_last'].to(device) if 'is_last' in batch else None
             
             # RETRIEVAL METRICS
             # use max K for beam size
@@ -109,10 +137,10 @@ def compute_metrics(model, dataloader, device, k_list=[5, 10]):
             # convert global IDs to raw semantic IDs by subtracting the item offsets
             predictions = predictions - model.item_offsets.view(1, 1, -1)
             
-            accumulator.update(predictions, target_tuples)
+            accumulator.update(predictions, target_tuples, user_ids=user_ids,
+                               seen_tuples=seen_tuples, is_last=is_last)
 
-    metrics_report = accumulator.compute()
-    return metrics_report['recall'], metrics_report['ndcg'], metrics_report['hierarchical']
+    return accumulator.compute()
 
 def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_override=None, overrides=None):
     """
@@ -205,6 +233,7 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
     logger.info("Loading User History Data...")
     sequences, num_users, num_items = load_amazon_sequences(config.data.category, get_split_config(config))
     logger.info(f"Loaded history for {num_users} users and {num_items} items")
+    check_semids(semids_data, config, num_items)
     
     # create datasets and dataloaders
     train_dataset = SemanticIDSequenceDataset(
@@ -223,7 +252,7 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
     persistent_workers = (num_workers > 0)
     
     use_augmentation = config.seq2seq.get('data_augmentation', False)
-    max_history_len = config.seq2seq.get('max_history_len', 20)
+    max_history_len = get_max_history_len(config)
     
     if use_augmentation:
         train_collate_fn = partial(collate_fn_with_augmentation, max_len=max_history_len)
@@ -331,7 +360,9 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
     
     start_epoch = 0
     global_step = 0
-    best_recall_at_5 = 0.0
+    ckpt_metric, ckpt_k = get_checkpoint_metric(config)  # fails early on invalid values
+    checkpoint_metric = f"{ckpt_metric}@{ckpt_k}"  # checkpoint key and log name, e.g. 'ndcg@10'
+    best_metric = 0.0
     
     scaler = torch.amp.GradScaler('cuda', enabled=is_cuda)
 
@@ -359,16 +390,18 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
         start_epoch = checkpoint['epoch'] + 1
         
         # restore best recall if available
-        if 'recall@5' in checkpoint:
-            best_recall_at_5 = checkpoint['recall@5']
+        if checkpoint_metric in checkpoint:
+            best_metric = checkpoint[checkpoint_metric]
         elif 'loss' in checkpoint:
-            logger.info("Old loss-based checkpoint detected. Resetting best recall to 0.0.")
+            logger.info("Old loss-based checkpoint detected. Resetting best metric to 0.0.")
+        else:
+            logger.info(f"Checkpoint holds no value for {checkpoint_metric}. Resetting best metric to 0.0.")
             
         # estimate global step: start_epoch * steps_per_epoch
         steps_per_epoch = len(train_loader)
         global_step = start_epoch * steps_per_epoch
         
-        logger.info(f"Resumed from Epoch {start_epoch}, Global Step {global_step}, Best Recall@5 {best_recall_at_5}")
+        logger.info(f"Resumed from Epoch {start_epoch}, Global Step {global_step}, Best {checkpoint_metric} {best_metric}")
 
     num_epochs = config.seq2seq.get('num_epochs', 2300)
     steps_per_epoch = len(train_loader)
@@ -399,7 +432,7 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
     num_epochs = config.seq2seq.get('num_epochs', 2300)
     
     early_stopping_patience = config.seq2seq.get('early_stopping_patience', 7) # cycles of metrics evaluation
-    recall_no_improve = 0
+    metric_no_improve = 0
     
     for epoch in range(start_epoch, num_epochs):
         model.train()
@@ -460,33 +493,34 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
         eval_delay_epochs = config.seq2seq.get('eval_delay_epochs', 0)
         if not stop_training and (epoch + 1) > eval_delay_epochs and ((epoch + 1) % eval_epoch_interval == 0 or (epoch + 1) == num_epochs):
             logger.info("Computing retrieval metrics (Beam Search)...")
-            avg_recall, avg_ndcg, avg_hierarchical = compute_metrics(model, eval_loader_metrics, device)
+            report = compute_metrics(model, eval_loader_metrics, device, k_list=VALIDATION_K_LIST)
+            avg_recall, avg_ndcg, avg_hierarchical = report['recall'], report['ndcg'], report['hierarchical']
             
             logger.info(f"Recall: {avg_recall} | NDCG: {avg_ndcg}")
             
-            current_recall_at_5 = avg_recall.get(5, 0.0)
-            if current_recall_at_5 > best_recall_at_5:
-                best_recall_at_5 = current_recall_at_5
-                recall_no_improve = 0 # reset patience
+            current_metric = report[ckpt_metric][ckpt_k]
+            if current_metric > best_metric:
+                best_metric = current_metric
+                metric_no_improve = 0 # reset patience
                 if config.general.get('save_model', True):
                     os.makedirs(recommender_model_dir, exist_ok=True)
                     model_id = f"{recommender_run_name}_best"
                     save_path = os.path.join(recommender_model_dir, f"{model_id}.pt")
-                    save_checkpoint(model, optimizer, scheduler, scaler, epoch, current_recall_at_5, save_path, "recall@5")
-                    logger.info(f"New best Recall@5 achieved ({current_recall_at_5:.4f})! Model saved to {save_path}")
+                    save_checkpoint(model, optimizer, scheduler, scaler, epoch, current_metric, save_path, checkpoint_metric)
+                    logger.info(f"New best {checkpoint_metric} achieved ({current_metric:.4f})! Model saved to {save_path}")
                     log_model_artifact(
                         model_path=save_path,
                         run_name=model_id,
                         artifact_type="tiger-recommender",
-                        metadata={"epoch": epoch, "recall@5": current_recall_at_5,
+                        metadata={"epoch": epoch, checkpoint_metric: current_metric,
                                   "rqvae_semids": semantic_ids_path},
                         config=config,
                     )
             else:
-                recall_no_improve += 1
-                logger.info(f"No improvement in Recall@5 for {recall_no_improve} evaluations.")
-                if early_stopping and early_stopping_patience is not None and recall_no_improve >= early_stopping_patience:
-                    logger.info(f"Early stopping triggered. Recall@5 hasn't improved for {early_stopping_patience} evaluations.")
+                metric_no_improve += 1
+                logger.info(f"No improvement in {checkpoint_metric} for {metric_no_improve} evaluations.")
+                if early_stopping and early_stopping_patience is not None and metric_no_improve >= early_stopping_patience:
+                    logger.info(f"Early stopping triggered. {checkpoint_metric} hasn't improved for {early_stopping_patience} evaluations.")
                     stop_training = True
 
             # merge metrics into wandb log

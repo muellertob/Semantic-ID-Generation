@@ -10,12 +10,51 @@ from functools import partial
 from modules.recommender import TigerSeq2Seq
 from data.loader import load_amazon_sequences
 from data.protocols import get_split_config
-from data.sequence import SemanticIDSequenceDataset, collate_fn
+from data.semids_checks import check_semids
+from data.sequence import SemanticIDSequenceDataset, collate_fn, get_max_history_len
 from train_seq2seq import compute_metrics
 from utils.seed import set_seed, seed_worker, get_seeded_generator
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+def _metrics_dict(recall, ndcg):
+    """Flat {'Recall@k': ..., 'NDCG@k': ...} dict as stored in the meta JSON."""
+    out = {}
+    for k in recall:
+        out[f"Recall@{k}"] = float(recall[k])
+        out[f"NDCG@{k}"] = float(ndcg[k])
+    return out
+
+def build_meta(report, protocol):
+    """
+    Meta JSON of one evaluated split, built from a MetricAccumulator report.
+
+    'metrics' and 'hierarchical' (read by run_experiments.py) hold the main result: per-user
+    averages under gts, row averages under loo (one row per user there). gts adds the
+    per-target and last-target averages and the counts.
+    """
+    hierarchical = {k: float(v) for k, v in report['hierarchical'].items()}
+    if protocol == 'gts':
+        meta = {
+            "metrics": _metrics_dict(report['recall_user'], report['ndcg_user']),
+            "hierarchical": {k: float(v) for k, v in report['hierarchical_user'].items()},
+            "hierarchical_per_target": hierarchical,
+            "metrics_per_target": _metrics_dict(report['recall'], report['ndcg']),
+            "metrics_last": _metrics_dict(report['recall_last'], report['ndcg_last']),
+        }
+    else:
+        meta = {
+            "metrics": _metrics_dict(report['recall'], report['ndcg']),
+            "hierarchical": hierarchical,
+        }
+    if 'seen_at_k' in report:
+        meta["seen_at_k"] = {str(k): float(v) for k, v in report['seen_at_k'].items()}
+    if 'users_with_seen_at_k' in report:
+        meta["users_with_seen_at_k"] = {str(k): float(v) for k, v in report['users_with_seen_at_k'].items()}
+    if protocol == 'gts':
+        meta["counts"] = {"num_users": int(report['num_users']), "num_rows": int(report['total_samples'])}
+    return meta
 
 def run_testing(config_path, semantic_ids_path, model_path, overrides=None):
     """
@@ -59,16 +98,12 @@ def run_testing(config_path, semantic_ids_path, model_path, overrides=None):
     logger.info(f"Resolved Semantic ID Type: {extracted_sid_type}")
  
     # load sequential data
-    logger.info("Loading User History Data (Test Split)...")
-    sequences, num_users, num_items = load_amazon_sequences(config.data.category, get_split_config(config))
+    split_config = get_split_config(config)
+    protocol = split_config.protocol
+    logger.info(f"Loading User History Data (Test Split, protocol={protocol})...")
+    sequences, num_users, num_items = load_amazon_sequences(config.data.category, split_config)
     logger.info(f"Loaded history for {num_users} users and {num_items} items")
-    
-    # create dataset and dataloader for TEST split
-    test_dataset = SemanticIDSequenceDataset(
-        history_data=sequences,
-        semantic_ids=semantic_ids,
-        mode='test'
-    )
+    check_semids(semids_data, config, num_items)
     
     num_workers = config.seq2seq.get('num_workers', 0)
     persistent_workers = (num_workers > 0)
@@ -77,19 +112,28 @@ def run_testing(config_path, semantic_ids_path, model_path, overrides=None):
     metric_batch_size = max(1, config.seq2seq.get('batch_size', 256) // 2)
     logger.info(f"Using Metrics Batch Size = {metric_batch_size}")
     
-    test_collate_fn = partial(collate_fn, max_len=config.seq2seq.get('max_history_len', 20))
+    test_collate_fn = partial(collate_fn, max_len=get_max_history_len(config))
     
     g = get_seeded_generator(seed)
-    test_loader = DataLoader(
-        test_dataset,
-        batch_size=metric_batch_size,
-        shuffle=False,
-        collate_fn=test_collate_fn,
-        num_workers=num_workers,
-        persistent_workers=persistent_workers,
-        generator=g,
-        worker_init_fn=seed_worker
-    )
+    
+    def make_loader(split):
+        dataset = SemanticIDSequenceDataset(
+            history_data=sequences,
+            semantic_ids=semantic_ids,
+            mode=split
+        )
+        return DataLoader(
+            dataset,
+            batch_size=metric_batch_size,
+            shuffle=False,
+            collate_fn=test_collate_fn,
+            num_workers=num_workers,
+            persistent_workers=persistent_workers,
+            generator=g,
+            worker_init_fn=seed_worker
+        )
+    
+    test_loader = make_loader('test')
     
     # initialize model
     model = TigerSeq2Seq(
@@ -128,7 +172,11 @@ def run_testing(config_path, semantic_ids_path, model_path, overrides=None):
 
     # compute metrics with standard k list
     k_list = [5, 10, 20]
-    avg_recall, avg_ndcg, avg_hierarchical = compute_metrics(model, test_loader, device, k_list=k_list)
+    report = compute_metrics(model, test_loader, device, k_list=k_list)
+    meta = build_meta(report, protocol)
+    avg_recall = {k: meta["metrics"][f"Recall@{k}"] for k in k_list}
+    avg_ndcg = {k: meta["metrics"][f"NDCG@{k}"] for k in k_list}
+    avg_hierarchical = meta["hierarchical"]
     
     logger.info("Evaluation Results:")
     for k in k_list:
@@ -138,21 +186,28 @@ def run_testing(config_path, semantic_ids_path, model_path, overrides=None):
     logger.info("Hierarchical Results:")
     for key, val in avg_hierarchical.items():
         logger.info(f"{key}: {val:.4f}")
+    
+    if "seen_at_k" in meta:
+        logger.info(f"Seen items in top-k slots: {meta['seen_at_k']} | users with a seen item in top-k: {meta.get('users_with_seen_at_k')}")
+    
+    # cold-start test split (global temporal split only): meta['cold'] in the layout of build_meta;
+    # an empty split gets counts only, no metrics
+    if protocol == 'gts':
+        logger.info("Starting Evaluation on Cold Test Set...")
+        report_cold = compute_metrics(model, make_loader('test_cold'), device, k_list=k_list)
+        if report_cold['total_samples'] > 0:
+            meta["cold"] = build_meta(report_cold, protocol)
+            logger.info(f"Cold test results: {meta['cold']['metrics']}")
+        else:
+            logger.warning("Cold test split is empty.")
+            meta["cold"] = {"counts": {"num_users": 0, "num_rows": 0}}
         
     # write metadata JSON if path provided
     if config.general.get('meta_json', None):
         meta_json_path = config.general.meta_json
         os.makedirs(os.path.dirname(meta_json_path), exist_ok=True)
-        metrics_dict = {}
-        for k in k_list:
-            metrics_dict[f"Recall@{k}"] = float(avg_recall[k])
-            metrics_dict[f"NDCG@{k}"] = float(avg_ndcg[k])
-        hier_dict = {k: float(v) for k, v in avg_hierarchical.items()}
         with open(meta_json_path, 'w') as f:
-            json.dump({
-                "metrics": metrics_dict,
-                "hierarchical": hier_dict
-            }, f)
+            json.dump(meta, f)
 
     return avg_recall, avg_ndcg, avg_hierarchical
 

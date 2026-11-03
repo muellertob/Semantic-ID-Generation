@@ -3,8 +3,14 @@ import numpy as np
 
 class MetricAccumulator:
     """
-    Accumulates retrieval metrics across multiple batches for accurate averaging,
-    fully vectorized on PyTorch devices (CUDA/MPS/CPU).
+    Accumulates retrieval metrics over batches; compute() returns averages over all rows.
+
+    update() optionally takes user_ids, seen_tuples (SID tuples of each row's history) and
+    is_last (one flag per row), each in all update() calls or in none. compute() then adds:
+      - user_ids: per-user averages (recall_user, ndcg_user, hierarchical_user), num_users,
+      - is_last: averages over the users' last targets (recall_last, ndcg_last),
+      - seen_tuples: seen_at_k, the share of top-k slots holding a seen item
+        (with user_ids also users_with_seen_at_k).
     """
     def __init__(self, k_list=[1, 5, 10], num_layers=4):
         self.k_list = k_list
@@ -20,16 +26,44 @@ class MetricAccumulator:
             for k in self.k_list 
             for i in range(1, self.num_layers + 1)
         }
+        # which optional inputs the first update() received; later updates must match
+        self._given = None
+        # per-row values, kept for the per-user and last-target averages in compute()
+        self._row_users = []
+        self._row_is_last = []
+        self._row_recall = {k: [] for k in self.k_list}
+        self._row_ndcg = {k: [] for k in self.k_list}
+        self._row_hier = {key: [] for key in self.hierarchical_recall}
+        self._row_seen = {k: [] for k in self.k_list}
+        self._seen_hits = {k: 0.0 for k in self.k_list}
+        self._seen_slots = {k: 0 for k in self.k_list}
 
     @torch.no_grad()
-    def update(self, predictions, targets):
+    def update(self, predictions, targets, user_ids=None, seen_tuples=None, is_last=None):
         """
         Update the accumulator with results from a new batch.
         
         Args:
-            predictions (torch.Tensor): [Batch, Beam_Size, Codebook_Layers]
+            predictions (torch.Tensor): [Batch, Beam_Size, Codebook_Layers]; Beam_Size >= max(k_list)
             targets (torch.Tensor): [Batch, 1, Codebook_Layers] or [Batch, Codebook_Layers]
+            user_ids (torch.Tensor, optional): [Batch]; enables the per-user metrics
+            seen_tuples (torch.Tensor, optional): [Batch, S_max, Codebook_Layers] SID tuples of all
+                items in the row's history before the target, padded with -1 (negative values are
+                padding); enables seen_at_k
+            is_last (torch.Tensor, optional): [Batch] bool; enables the last-target metrics
         """
+        max_k = max(self.k_list)
+        if predictions.size(1) < max_k:
+            raise ValueError(f"predictions have {predictions.size(1)} columns, need at least max(k_list) = {max_k}")
+        given = {"user_ids": user_ids is not None, "seen_tuples": seen_tuples is not None, "is_last": is_last is not None}
+        if self._given is None:
+            self._given = given
+        else:
+            for name, present in given.items():
+                if present != self._given[name]:
+                    raise ValueError(f"{name} must be given in every update() call or in none "
+                                     f"(first call: {'given' if self._given[name] else 'not given'})")
+
         device = predictions.device
         batch_size = targets.size(0)
         self.total_samples += batch_size
@@ -38,8 +72,6 @@ class MetricAccumulator:
         if targets.dim() == 3:
             targets = targets.squeeze(1)
 
-        max_k = max(self.k_list)
-        
         # exact match comparison: [Batch, max_k, Codebook_Layers] vs [Batch, 1, Codebook_Layers]
         full_match = (predictions[:, :max_k, :] == targets.unsqueeze(1)).all(dim=-1) # [Batch, max_k]
 
@@ -52,20 +84,95 @@ class MetricAccumulator:
         ranks = torch.arange(max_k, device=device).unsqueeze(0)  # [1, max_k]; 0-based ranks
         discounts = 1.0 / torch.log2(ranks.float() + 2.0)        # [1, max_k]; +2 for 1-based rank in log2
 
+        per_user = user_ids is not None
+        per_row = per_user or (is_last is not None)  # recall / NDCG rows are needed for user and last averages
+        if per_user:
+            self._row_users.append(user_ids.detach().cpu().long())
+        if is_last is not None:
+            self._row_is_last.append(is_last.detach().cpu().bool())
+
         for k in self.k_list:
             # Recall@k: exact match is within top k
-            recall_k = full_match[:, :k].any(dim=-1).float().sum().item()
+            recall_rows = full_match[:, :k].any(dim=-1).float()
+            recall_k = recall_rows.sum().item()
             self.total_recall[k] += recall_k
 
             # NDCG@k: sum of matching position discounts within top k
-            ndcg_k = (full_match[:, :k] * discounts[:, :k]).sum(dim=-1).sum().item()
+            ndcg_rows = (full_match[:, :k] * discounts[:, :k]).sum(dim=-1)
+            ndcg_k = ndcg_rows.sum().item()
             self.total_ndcg[k] += ndcg_k
+
+            if per_row:
+                self._row_recall[k].append(recall_rows.cpu())
+                self._row_ndcg[k].append(ndcg_rows.cpu())
 
             # Hierarchical Recall@k for prefix slices
             for layer in range(1, self.num_layers + 1):
                 slice_match = (predictions[:, :k, :layer] == targets[:, None, :layer]).all(dim=-1) # None equals unsqueeze(1) -> [Batch, 1, layer]
-                h_recall_layer = slice_match.any(dim=-1).float().sum().item()
-                self.hierarchical_recall[f"h@{k}_slice_{layer}"] += h_recall_layer
+                h_recall_rows = slice_match.any(dim=-1).float()
+                self.hierarchical_recall[f"h@{k}_slice_{layer}"] += h_recall_rows.sum().item()
+                if per_user:
+                    self._row_hier[f"h@{k}_slice_{layer}"].append(h_recall_rows.cpu())
+
+        if seen_tuples is not None:
+            self._update_seen(predictions, seen_tuples, per_user)
+
+    def _update_seen(self, predictions, seen_tuples, per_user):
+        """Counts top-k slots whose full SID tuple equals one of the row's seen tuples."""
+        max_k = max(self.k_list)
+        batch_size = predictions.size(0)
+        preds = predictions[:, :max_k, :]
+        seen_tuples = seen_tuples.to(preds.device)
+        seen_valid = (seen_tuples >= 0).all(dim=-1)                                  # [B, S]
+        # [B, max_k, 1, L] vs [B, 1, S, L] -> [B, max_k, S]
+        eq = (preds.unsqueeze(2) == seen_tuples.unsqueeze(1)).all(dim=-1)
+        slot_hit = (eq & seen_valid.unsqueeze(1)).any(dim=-1)                        # [B, max_k]
+        for k in self.k_list:
+            self._seen_hits[k] += slot_hit[:, :k].float().sum().item()
+            self._seen_slots[k] += batch_size * k
+            if per_user:
+                self._row_seen[k].append(slot_hit[:, :k].any(dim=-1).cpu())
+
+    @staticmethod
+    def _mean_per_user(row_values, user_index, num_users):
+        """Mean over each user's rows, then mean over users."""
+        sums = torch.zeros(num_users, dtype=torch.float64).scatter_add_(0, user_index, row_values.double())
+        counts = torch.zeros(num_users, dtype=torch.float64).scatter_add_(0, user_index, torch.ones_like(row_values, dtype=torch.float64))
+        return float((sums / counts).mean().item())
+
+    def _extra_metrics(self):
+        """User-level, last-target and seen-item metrics (only those whose inputs were provided)."""
+        extra = {}
+        given = self._given
+
+        if given["user_ids"]:
+            users = torch.cat(self._row_users)
+            unique_users, user_index = torch.unique(users, return_inverse=True)
+            num_users = unique_users.numel()
+            extra["num_users"] = num_users
+            extra["recall_user"] = {k: self._mean_per_user(torch.cat(self._row_recall[k]), user_index, num_users) for k in self.k_list}
+            extra["ndcg_user"] = {k: self._mean_per_user(torch.cat(self._row_ndcg[k]), user_index, num_users) for k in self.k_list}
+            # per-user averaged hierarchical recall, so that h@k_slice_<layers> equals recall_user[k]
+            extra["hierarchical_user"] = {key: self._mean_per_user(torch.cat(rows), user_index, num_users) for key, rows in self._row_hier.items()}
+            if given["seen_tuples"]:
+                # share of users with at least one seen item among their top-k slots in any of their rows
+                extra["users_with_seen_at_k"] = {}
+                for k in self.k_list:
+                    user_hit = torch.zeros(num_users, dtype=torch.float64).scatter_reduce_(
+                        0, user_index, torch.cat(self._row_seen[k]).double(), reduce="amax", include_self=True)
+                    extra["users_with_seen_at_k"][k] = float(user_hit.mean().item())
+
+        if given["is_last"]:
+            last = torch.cat(self._row_is_last)
+            if not last.any():
+                raise ValueError("is_last given but no row is marked as a user's last row")
+            extra["recall_last"] = {k: float(torch.cat(self._row_recall[k])[last].double().mean().item()) for k in self.k_list}
+            extra["ndcg_last"] = {k: float(torch.cat(self._row_ndcg[k])[last].double().mean().item()) for k in self.k_list}
+
+        if given["seen_tuples"]:
+            extra["seen_at_k"] = {k: float(self._seen_hits[k] / max(1, self._seen_slots[k])) for k in self.k_list}
+
+        return extra
 
     def compute(self):
         """Returns the final averaged metrics."""
@@ -81,7 +188,8 @@ class MetricAccumulator:
             "recall": {k: float(v / self.total_samples) for k, v in self.total_recall.items()},
             "ndcg": {k: float(v / self.total_samples) for k, v in self.total_ndcg.items()},
             "hierarchical": {k: float(v / self.total_samples) for k, v in self.hierarchical_recall.items()},
-            "total_samples": self.total_samples
+            "total_samples": self.total_samples,
+            **self._extra_metrics(),
         }
 
 def calculate_entropy_and_coverage(ids_or_tensor, codebook_size: int):
