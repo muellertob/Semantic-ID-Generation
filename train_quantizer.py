@@ -78,7 +78,8 @@ def create_model(config, input_dim):
             commitment_weight=config.model.commitment_weight,
             quantization_method=quantization_method,
             distance_mode=distance_mode,
-            normalize=normalize
+            normalize=normalize,
+            commit_all_levels=config.model.commit_all_levels
         )
         logger.info(f"Created RQ-VAE model with {quantization_method_str} quantization, codebook_size={config.model.codebook_size}, layers={codebook_layers}")
     

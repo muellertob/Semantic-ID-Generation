@@ -55,6 +55,8 @@ def generate_model_id(config: Dict) -> str:
                 f"cb{codebook_layers}x{codebook_size}-cw{commitment_weight}-"
                 f"lr{t.get('learning_rate', '')}-wd{t.get('weight_decay', '')}-ep{t.get('num_epochs', '')}"
             )
+            if m.get('commit_all_levels', False):
+                model_id += "-cal"
         return model_id
 
     return f"model-{dataset}-unknown"

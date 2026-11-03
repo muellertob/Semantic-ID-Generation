@@ -186,10 +186,18 @@ class ResidualVectorQuantizer(nn.Module):
         do_kmeans_init: bool = True, 
         sim_vq: bool = False, 
         forward_mode: QuantizeForwardMode = QuantizeForwardMode.STE, 
-        distance_mode: QuantizeDistance = QuantizeDistance.L2
+        distance_mode: QuantizeDistance = QuantizeDistance.L2,
+        commit_all_levels: bool = False
     ):
+        """
+        commit_all_levels: False (TIGER) subtracts each level's straight-through output, so only the
+        level-1 commitment term reaches the encoder. True subtracts the detached codeword and applies
+        one straight-through step to the sum, so every level's term does (Lee et al. 2022, Eq. 7). STE only.
+        """
         super().__init__()
         self.codebook_layers = codebook_layers
+        self.commit_all_levels = commit_all_levels
+        self._check_mode(forward_mode)
         self.codebook_size = codebook_size
         self.quantization_layers = nn.ModuleList([
             Quantization(
@@ -204,7 +212,12 @@ class ResidualVectorQuantizer(nn.Module):
             for _ in range(codebook_layers)
         ])
         
+    def _check_mode(self, method: QuantizeForwardMode) -> None:
+        if self.commit_all_levels and method != QuantizeForwardMode.STE:
+            raise ValueError(f"commit_all_levels requires STE, got {method}")
+
     def set_quantization_method(self, method: QuantizeForwardMode) -> None:
+        self._check_mode(method)
         for layer in self.quantization_layers:
             layer.set_quantization_method(method)
             
@@ -228,6 +241,8 @@ class ResidualVectorQuantizer(nn.Module):
             quantized = layer(res, temperature=temperature)
             quantize_loss = quantize_loss + quantized.loss
             emb, id = quantized.embeddings, quantized.ids
+            if self.commit_all_levels:
+                emb = layer.get_item_embeddings(id).detach()  # codeword; the residual keeps its gradient
             res = res - emb  # update residuals
             if i == 0:
                 first_residual = res
@@ -240,6 +255,9 @@ class ResidualVectorQuantizer(nn.Module):
         
         # summing across the hierarchy dimension (dim=0) rebuilds the final continuous representation
         quantized_latent = embs_tensor.sum(dim=0) # shape: (batch, latent_dim)
+        if self.commit_all_levels and self.training:
+            # one straight-through step on the sum, so d(quantized_latent)/dx = I
+            quantized_latent = x + (quantized_latent - x).detach()
         
         sem_ids_tensor = torch.stack(sem_ids, dim=1) # shape: (batch, codebook_layers)
         

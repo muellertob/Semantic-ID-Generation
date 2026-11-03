@@ -15,6 +15,7 @@ model:
   codebook_layers: 3
   codebook_size: 128
   commitment_weight: 0.25         # GRID used 0.25
+  commit_all_levels: False        # True: every level's commitment term reaches the encoder
   quantization_method: "ste"
   distance_method: "l2"
   normalize_inputs: True          # VAE model-internal input normalization layer (BatchNorm + L2 Norm)
