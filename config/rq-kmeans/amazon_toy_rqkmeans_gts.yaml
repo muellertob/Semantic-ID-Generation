@@ -1,0 +1,23 @@
+# Global-temporal-split variant of amazon_toy_rqkmeans.yaml; the quantizer fits on the stage-1 items only.
+# data loader configuration
+data:
+  dataset: "amazon"
+  category: "toys"
+  normalize_data: True # important for consistent codebook perplexity
+  split_protocol: "gts" # global temporal split
+  gts_q_test: 0.9
+  gts_q_val: 0.9
+
+# model configuration (RQ-KMeans)
+model:
+  codebook_layers: 3
+  codebook_size: 256
+  n_iters: 100
+  normalize_residuals: True
+
+# additional configuration
+general:
+  seed: 10
+  save_model: True
+  model_path: "models/rqkmeans/rqkmeans.pt"
+  output_path: "outputs/rqkmeans/rqkmeans_semids.pt"

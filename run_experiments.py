@@ -293,6 +293,8 @@ def main():
     parser.add_argument("--outputs-dir", type=str, default="outputs", help="Folder for SIDs, experiment results, run configs and W&B runs (e.g. outputs_toys_v2)")
     parser.add_argument("--models-dir", type=str, default="models", help="Folder for quantizer and recommender checkpoints (e.g. models_toys_v2)")
     parser.add_argument("--reuse-semids", type=str, default=None, help="Skip Stage 1 and train Stage 2 on the SIDs of an earlier run's outputs folder (e.g. outputs_toys); its semids.pt and quantizer/generate meta JSONs are copied into --outputs-dir")
+    parser.add_argument("--protocol", type=str, default="loo", choices=["loo", "gts"], help="Evaluation protocol: loo = leave-one-out (default, the reported Toys experiments), gts = global temporal split (*_gts configs)")
+    parser.add_argument("--variants", type=str, default=None, help="Comma-separated experiment names to run (e.g. RQ_KMeans,FSQ); default: all of the protocol's experiments")
     args = parser.parse_args()
     
     reuse_dir = args.reuse_semids
@@ -394,6 +396,60 @@ def main():
         }
     ]
     
+    # Amazon Toys Experiments under the global temporal split (--protocol gts): quantizers fit on the stage-1
+    # items, Stage 2 with the 1471-epoch (about 100k steps) budget, no early stopping, best-NDCG@10 checkpoint
+    gts_experiments = [
+        {
+            "name": "RQ_KMeans",
+            "quant_config": "config/rq-kmeans/amazon_toy_rqkmeans_gts.yaml",
+            "recommender_config": "config/recommender/amazon_toy_grid_gts.yaml",
+            "is_rqkmeans": True,
+            "codebook_size": 256,
+        },
+        {
+            "name": "FSQ",
+            "quant_config": "config/fsq/amazon_toy_gts.yaml",
+            "recommender_config": "config/recommender/amazon_toy_grid_fsq_gts.yaml",
+            "codebook_size": 288,
+        },
+        {
+            "name": "Residual_FSQ_Simple_HighDim",
+            "quant_config": "config/fsq/amazon_toy_rfsq_simple_highdim_gts.yaml",
+            "recommender_config": "config/recommender/amazon_toy_grid_fsq_gts.yaml",
+            "codebook_size": 288,
+        },
+        {
+            "name": "Residual_FSQ_Simple_LowDim",
+            "quant_config": "config/fsq/amazon_toy_rfsq_simple_lowdim_gts.yaml",
+            "recommender_config": "config/recommender/amazon_toy_grid_fsq_gts.yaml",
+            "codebook_size": 288,
+        },
+        {
+            "name": "Residual_FSQ_Complex",
+            "quant_config": "config/fsq/amazon_toy_rfsq_complex_gts.yaml",
+            "recommender_config": "config/recommender/amazon_toy_grid_fsq_gts.yaml",
+            "codebook_size": 288,
+        },
+        {
+            "name": "RQ_VAE",
+            "quant_config": "config/rq-vae/amazon_toy_tiger_gts.yaml",
+            "recommender_config": "config/recommender/amazon_toy_grid_gts.yaml",
+            "codebook_size": 256,
+        }
+    ]
+    if args.protocol == "gts":
+        experiments = gts_experiments
+    
+    # restrict to the requested variants (names are matched case-insensitively)
+    if args.variants is not None:
+        wanted = [v.strip() for v in args.variants.split(",") if v.strip() != ""]
+        by_lower = {exp["name"].lower(): exp for exp in experiments}
+        unknown = [v for v in wanted if v.lower() not in by_lower]
+        if unknown:
+            parser.error(f"--variants: unknown {unknown}; available for --protocol {args.protocol}: {[exp['name'] for exp in experiments]}")
+        names = dict.fromkeys(v.lower() for v in wanted)
+        experiments = [by_lower[name] for name in names]
+    
     if reuse_dir is not None:
         missing = [os.path.join(reuse_dir, f"{exp['name'].lower()}_seed_{seed}", "semids.pt") for exp in experiments for seed in seeds]
         missing = [p for p in missing if not os.path.exists(p)]
@@ -402,7 +458,7 @@ def main():
     
     init_report_files()
     
-    log_msg(f"Starting experiments run. Seeds = {seeds}, Dry run = {dry_run}, Parallel = {parallel}, Reuse SIDs from = {reuse_dir}")
+    log_msg(f"Starting experiments run. Protocol = {args.protocol}, Variants = {[exp['name'] for exp in experiments]}, Seeds = {seeds}, Dry run = {dry_run}, Parallel = {parallel}, Reuse SIDs from = {reuse_dir}")
     
     # Flatten experiments and seeds into a sequence of pipeline tasks
     tasks = []

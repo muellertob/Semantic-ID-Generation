@@ -1,0 +1,53 @@
+# Global-temporal-split variant of amazon_toy_grid_100k.yaml.
+# data loader configuration
+data:
+  dataset: "amazon"
+  category: "toys"
+  split_protocol: "gts" # global temporal split
+  gts_q_test: 0.9
+  gts_q_val: 0.9
+
+# seq2seq configuration (TIGER paper implementation)
+seq2seq:
+  d_model: 128
+  d_kv: 64
+  d_ff: 1024
+  num_layers: 4
+  num_heads: 6
+  dropout: 0.1
+  activation_fn: "relu"
+  
+  # optimization
+  learning_rate: 5e-4
+  weight_decay: 1e-6
+  use_lr_scheduler: False
+  batch_size: 256
+  
+  # data
+  max_history_len: 20
+  user_tokens: 2000
+  codebook_layers: 3
+  codebook_size: 256
+  data_augmentation: True
+  
+  # training loop
+  num_epochs: 1471 # x 68 steps (gts) = 100k steps, TIGER's Toys budget
+  eval_epoch_interval: 5
+  eval_delay_epochs: 150
+  early_stopping: False
+  checkpoint_metric:
+    metric: ndcg # recall | ndcg
+    k: 10 # 5 | 10
+  early_stopping_patience: 15
+  resume_optimizer: True
+  num_workers: 4
+
+# additional configuration
+general:
+  seed: 10
+  compile: True
+  use_wandb: True
+  wandb_log_artifacts: False
+  wandb_project_recommender: "mt-amazon-recommender"
+  wandb_entity: "tobias-mueller99-johannes-kepler-universit-t-linz"
+  save_model: True
