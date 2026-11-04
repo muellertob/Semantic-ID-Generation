@@ -56,6 +56,21 @@ def prepare_quantizer_task(exp, seed, dry_run):
         
     return cmd, model_path, semids_output_path, quant_meta_json
 
+# prepares the config and command that turn a trained quantizer into Semantic IDs; the variant's overrides must
+# match those the quantizer was trained with
+def prepare_generate_task(exp, seed, quantizer_model_path, semids_output_path):
+    exp_name = exp["name"]
+    gen_meta_json = os.path.join(EXPERIMENT_DIR, f"{exp_name.lower()}_seed_{seed}_generate_meta.json")
+    gen_overrides = {
+        "general.seed": seed,
+        "general.meta_json": gen_meta_json,
+    }
+    gen_run_config = os.path.join(CONFIGS_DIR, f"{exp_name}_seed_{seed}_generate.yaml")
+    prepare_run_config(exp["quant_config"], gen_run_config, {**exp.get("quant_overrides", {}), **gen_overrides})
+    cmd = ["python", "main.py", "generate-ids", "--config", gen_run_config,
+           "--model_path", quantizer_model_path, "--output_path", semids_output_path]
+    return cmd, gen_meta_json
+
 # runs training and testing for a Seq2Seq recommender and returns metrics and run name
 def run_recommender_task(exp, seed, semids_output_path, dry_run):
     exp_name = exp["name"]
@@ -66,6 +81,7 @@ def run_recommender_task(exp, seed, semids_output_path, dry_run):
     rec_overrides = {
         "general.seed": seed,
         "general.meta_json": train_meta_json,
+        "general.run_name": f"{exp_name}_seed_{seed}",  # variants sharing a sid_type must not share a checkpoint
         "general.recommender_model_dir": os.path.join(MODELS_DIR, "recommender"),
         "general.wandb_dir": os.path.join(OUTPUTS_DIR, "wandb", "runs"),
     }
@@ -581,14 +597,7 @@ def main():
                 if not os.path.exists(quantizer_model_path):
                     raise FileNotFoundError(f"Expected quantizer model checkpoint not found at: {quantizer_model_path}")
                     
-                gen_overrides = {
-                    "general.seed": seed,
-                    "general.meta_json": gen_meta_json
-                }
-                gen_run_config = os.path.join(CONFIGS_DIR, f"{exp_name}_seed_{seed}_generate.yaml")
-                prepare_run_config(exp["quant_config"], gen_run_config, gen_overrides)
-                
-                cmd = ["python", "main.py", "generate-ids", "--config", gen_run_config, "--model_path", quantizer_model_path, "--output_path", semids_output_path]
+                cmd, gen_meta_json = prepare_generate_task(exp, seed, quantizer_model_path, semids_output_path)
                 run_command(cmd)
                 if os.path.exists(gen_meta_json):
                     with open(gen_meta_json, "r") as f:

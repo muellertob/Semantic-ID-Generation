@@ -485,3 +485,43 @@ class TestCheckpointMetric:
             run_training(config_path, semids_path, resume_path=ckpt_path,
                          overrides=["seq2seq.checkpoint_metric.metric=ndcg", "seq2seq.checkpoint_metric.k=10"])
             assert not mock_save.called, "best ndcg@10 from the checkpoint must be restored"
+
+
+class TestCheckpointName:
+
+    @pytest.fixture
+    def train_and_get_meta(self, tmp_path, seq2seq_config, semids_path, mock_seq2seq_model, mock_amazon_sequences):
+        """Runs a 2-epoch training with the given general.run_name (or none) and returns (best checkpoint path, meta)."""
+        import json
+        from train_seq2seq import run_training
+
+        def run(run_name):
+            config, config_path = seq2seq_config
+            config["general"].update(recommender_model_dir=str(tmp_path / "rec"), meta_json=str(tmp_path / "meta.json"))
+            if run_name:
+                config["general"]["run_name"] = run_name
+            OmegaConf.save(OmegaConf.create(config), config_path)
+            # the Stage-1 type is read from the SIDs file
+            semids = torch.load(semids_path, weights_only=False)
+            semids["sid_type"] = "RQ-VAE"
+            torch.save(semids, semids_path)
+
+            with patch("train_seq2seq.compute_metrics", return_value=FAKE_REPORT), \
+                    patch("train_seq2seq.load_amazon_sequences", return_value=(mock_amazon_sequences, 10, 20)), \
+                    patch("train_seq2seq.TigerSeq2Seq", return_value=mock_seq2seq_model), \
+                    patch("train_seq2seq.save_checkpoint") as mock_save:
+                run_training(config_path, semids_path)
+            with open(tmp_path / "meta.json") as f:
+                return mock_save.call_args.args[6], json.load(f)
+        return run
+
+    def test_run_name_from_config_names_the_checkpoint_and_the_meta(self, train_and_get_meta):
+        # two variants with the same sid_type must not write the same file
+        save_path, meta = train_and_get_meta("RQ_VAE_cal_seed_42")
+        assert (os.path.basename(save_path), meta["recommender_run_name"]) == (
+            "RQ_VAE_cal_seed_42_best.pt", "RQ_VAE_cal_seed_42")
+
+    def test_without_run_name_the_checkpoint_is_named_after_the_sid_type_and_seed(self, train_and_get_meta):
+        save_path, meta = train_and_get_meta(None)
+        assert (os.path.basename(save_path), meta["recommender_run_name"]) == (
+            "RQ-VAE_seed_42_best.pt", "RQ-VAE_seed_42")

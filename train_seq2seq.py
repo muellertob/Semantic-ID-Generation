@@ -192,8 +192,10 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
     # generate recommender run names (local checkpoint is static, WandB is unique)
     short_id = str(uuid.uuid4())[:8]
     if extracted_sid_type:
-        recommender_run_name = f"{extracted_sid_type}_seed_{seed}"
-        recommender_run_name_wandb = f"{extracted_sid_type}-seed-{seed}-{short_id}"
+        # a run name from the config (set per variant by run_experiments.py) keeps variants with the same sid_type apart
+        config_run_name = config.general.get('run_name', None)
+        recommender_run_name = config_run_name or f"{extracted_sid_type}_seed_{seed}"
+        recommender_run_name_wandb = f"{config_run_name or f'{extracted_sid_type}-seed-{seed}'}-{short_id}"
         group_name = extracted_sid_type
         tags = [extracted_sid_type, f"seed-{seed}"]
     else:

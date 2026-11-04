@@ -1,24 +1,40 @@
 """
 Integration tests for the experiment runner (run_experiments.py): the run configs it writes per variant.
 """
+from unittest.mock import patch
+
 from omegaconf import OmegaConf
 import pytest
 
 import run_experiments
-from run_experiments import GTS_EXPERIMENTS, prepare_quantizer_task
+from run_experiments import GTS_EXPERIMENTS, prepare_generate_task, prepare_quantizer_task, run_recommender_task
 
 
 @pytest.fixture
 def written_config(tmp_path, monkeypatch):
-    """Writes the seed-42 quantizer run config of a GTS variant into tmp_path and returns it as a flat dict."""
+    """Writes the seed-42 run config of a GTS variant into tmp_path and returns it as a flat dict.
+
+    `stage` is "quantizer" (default), "generate" or "recommender".
+    """
     for name, sub in [("OUTPUTS_DIR", "out"), ("MODELS_DIR", "models"),
                       ("EXPERIMENT_DIR", "out/experiments"), ("CONFIGS_DIR", "out/experiments/configs")]:
         monkeypatch.setattr(run_experiments, name, str(tmp_path / sub))
 
-    def write(variant):
+    def write(variant, stage="quantizer"):
         exp = next(e for e in GTS_EXPERIMENTS if e["name"] == variant)
-        cmd, _, _, _ = prepare_quantizer_task(exp, 42, dry_run=False)
-        config = OmegaConf.to_container(OmegaConf.load(cmd[-1]))
+        if stage == "quantizer":
+            cmd, _, _, _ = prepare_quantizer_task(exp, 42, dry_run=False)
+            config_path = cmd[-1]
+        elif stage == "generate":
+            cmd, _ = prepare_generate_task(exp, 42, "quantizer.pt", "semids.pt")
+            config_path = cmd[cmd.index("--config") + 1]
+        else:
+            # stop before the test step: the train command is the first one run
+            with patch("run_experiments.run_command", side_effect=StopIteration) as run_command:
+                with pytest.raises(StopIteration):
+                    run_recommender_task(exp, 42, "semids.pt", dry_run=False)
+            config_path = run_command.call_args.args[0][run_command.call_args.args[0].index("--config") + 1]
+        config = OmegaConf.to_container(OmegaConf.load(config_path))
         return {f"{section}.{key}": value for section, keys in config.items() for key, value in keys.items()}
     return write
 
@@ -52,3 +68,25 @@ def test_rqkmeans_std_differs_from_rqkmeans_only_in_the_input_normalization_and_
     assert set(old) == set(new)
     assert {key for key in old if old[key] != new[key]} == {
         "data.input_normalization", "general.model_path", "general.meta_json", "general.output_path"}
+
+
+def test_rqvae_center_generate_config_carries_the_variant_overrides(written_config):
+    # SIDs must be generated with the input setting the quantizer was trained with
+    config = written_config("RQ_VAE_center", "generate")
+    assert (config["data.input_normalization"], config["model.normalize_inputs"]) == ("center", False)
+
+
+def test_rqvae_center_generate_config_has_the_data_and_model_sections_of_the_quantizer_config(written_config):
+    train, generate = written_config("RQ_VAE_center"), written_config("RQ_VAE_center", "generate")
+    section = lambda config, name: {k: v for k, v in config.items() if k.startswith(name + ".")}
+    assert (section(generate, "data"), section(generate, "model")) == (section(train, "data"), section(train, "model"))
+
+
+def test_rqvae_generate_config_keeps_the_base_input_settings(written_config):
+    config = written_config("RQ_VAE", "generate")
+    assert (config["data.input_normalization"], config["model.normalize_inputs"]) == ("none", True)
+
+
+def test_recommender_train_config_names_the_run_after_the_variant(written_config):
+    # RQ_VAE and RQ_VAE_cal share the sid_type, so only the variant name keeps their checkpoints apart
+    assert written_config("RQ_VAE_cal", "recommender")["general.run_name"] == "RQ_VAE_cal_seed_42"
