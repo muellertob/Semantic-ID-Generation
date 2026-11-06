@@ -445,6 +445,34 @@ GTS_EXPERIMENTS = [
         "codebook_size": 256,
     },
     {
+        "name": "RQ_VAE_b025",  # TIGER's printed beta on its summed loss (24 times weaker than beta 6)
+        "quant_config": "config/rq-vae/amazon_toy_tiger_gts.yaml",
+        "quant_overrides": {"model.beta": 0.25},
+        "recommender_config": "config/recommender/amazon_toy_grid_gts.yaml",
+        "codebook_size": 256,
+    },
+    {
+        "name": "RQ_VAE_b025_20k",
+        "quant_config": "config/rq-vae/amazon_toy_tiger_gts.yaml",
+        "quant_overrides": {"model.beta": 0.25, "train.num_epochs": 20000},
+        "recommender_config": "config/recommender/amazon_toy_grid_gts.yaml",
+        "codebook_size": 256,
+    },
+    {
+        "name": "RQ_VAE_cal_b2",  # every level's commitment term, beta 6 / 3 levels (a mean over the levels)
+        "quant_config": "config/rq-vae/amazon_toy_tiger_gts.yaml",
+        "quant_overrides": {"model.commit_all_levels": True, "model.beta": 2.0},
+        "recommender_config": "config/recommender/amazon_toy_grid_gts.yaml",
+        "codebook_size": 256,
+    },
+    {
+        "name": "RQ_VAE_cal_b2_20k",
+        "quant_config": "config/rq-vae/amazon_toy_tiger_gts.yaml",
+        "quant_overrides": {"model.commit_all_levels": True, "model.beta": 2.0, "train.num_epochs": 20000},
+        "recommender_config": "config/recommender/amazon_toy_grid_gts.yaml",
+        "codebook_size": 256,
+    },
+    {
         "name": "RQ_VAE_center_20k",
         "quant_config": "config/rq-vae/amazon_toy_tiger_gts.yaml",
         "quant_overrides": {"data.input_normalization": "center", "model.normalize_inputs": False, "train.num_epochs": 20000},

@@ -93,7 +93,8 @@ def test_recommender_train_config_names_the_run_after_the_variant(written_config
 
 
 @pytest.mark.parametrize("variant, base", [("RQ_VAE_20k", "RQ_VAE"), ("RQ_VAE_cal_20k", "RQ_VAE_cal"),
-                                           ("RQ_VAE_center_20k", "RQ_VAE_center")])
+                                           ("RQ_VAE_center_20k", "RQ_VAE_center"), ("RQ_VAE_b025_20k", "RQ_VAE_b025"),
+                                           ("RQ_VAE_cal_b2_20k", "RQ_VAE_cal_b2")])
 def test_20k_variants_differ_from_their_base_only_in_the_epochs_and_paths(written_config, variant, base):
     # paired with the 2000-epoch runs of the same seed: the Stage-1 length is the only change
     old, new = written_config(base), written_config(variant)
@@ -101,3 +102,12 @@ def test_20k_variants_differ_from_their_base_only_in_the_epochs_and_paths(writte
     assert {key for key in old if old[key] != new[key]} == {
         "train.num_epochs", "general.model_path", "general.meta_json"}
     assert new["train.num_epochs"] == 20000
+
+
+@pytest.mark.parametrize("variant, base, beta", [("RQ_VAE_b025", "RQ_VAE", 0.25), ("RQ_VAE_cal_b2", "RQ_VAE_cal", 2.0)])
+def test_beta_variants_differ_from_their_base_only_in_beta_and_paths(written_config, variant, base, beta):
+    # b025: TIGER's printed 0.25 instead of 6; cal_b2: 6 split over the 3 levels that reach the encoder
+    old, new = written_config(base), written_config(variant)
+    assert set(old) == set(new)
+    assert {key for key in old if old[key] != new[key]} == {"model.beta", "general.model_path", "general.meta_json"}
+    assert new["model.beta"] == beta
