@@ -431,6 +431,27 @@ GTS_EXPERIMENTS = [
         "codebook_size": 256,
     },
     {
+        "name": "RQ_VAE_20k",  # TIGER's Stage-1 length (20k epochs)
+        "quant_config": "config/rq-vae/amazon_toy_tiger_gts.yaml",
+        "quant_overrides": {"train.num_epochs": 20000},
+        "recommender_config": "config/recommender/amazon_toy_grid_gts.yaml",
+        "codebook_size": 256,
+    },
+    {
+        "name": "RQ_VAE_cal_20k",
+        "quant_config": "config/rq-vae/amazon_toy_tiger_gts.yaml",
+        "quant_overrides": {"model.commit_all_levels": True, "train.num_epochs": 20000},
+        "recommender_config": "config/recommender/amazon_toy_grid_gts.yaml",
+        "codebook_size": 256,
+    },
+    {
+        "name": "RQ_VAE_center_20k",
+        "quant_config": "config/rq-vae/amazon_toy_tiger_gts.yaml",
+        "quant_overrides": {"data.input_normalization": "center", "model.normalize_inputs": False, "train.num_epochs": 20000},
+        "recommender_config": "config/recommender/amazon_toy_grid_gts.yaml",
+        "codebook_size": 256,
+    },
+    {
         "name": "RQ_VAE_center",  # keeps the item vector length: centered input, no BatchNorm, no L2
         "quant_config": "config/rq-vae/amazon_toy_tiger_gts.yaml",
         "quant_overrides": {"data.input_normalization": "center", "model.normalize_inputs": False},
