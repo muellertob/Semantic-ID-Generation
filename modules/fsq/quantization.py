@@ -114,7 +114,8 @@ class FSQ(FSQCore):
         with torch.no_grad():
             metrics = calculate_quantizer_metrics(
                 ids=indices,
-                codebook_size=self.codebook_size
+                codebook_size=self.codebook_size,
+                input_tensor=z
             )
         
         return QuantizeOutput(embeddings=out_emb, ids=indices, loss=loss, metrics=metrics)

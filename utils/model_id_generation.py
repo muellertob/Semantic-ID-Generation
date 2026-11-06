@@ -47,12 +47,12 @@ def generate_model_id(config: Dict) -> str:
         # RQ-VAE specific model ID
         else:
             codebook_size = m.get('codebook_size', '')
-            commitment_weight = m.get('commitment_weight', '')
+            beta = m.get('beta', '')
             
             model_id = (
                 f"{prefix}-{dataset}{dim_str}-bs{batch_size}-norm_{input_normalization}-"
                 f"hd{'_'.join(map(str, hidden_dimension))}-ld{latent_dimension}-"
-                f"cb{codebook_layers}x{codebook_size}-cw{commitment_weight}-"
+                f"cb{codebook_layers}x{codebook_size}-b{beta}-"
                 f"lr{t.get('learning_rate', '')}-wd{t.get('weight_decay', '')}-ep{t.get('num_epochs', '')}"
             )
             if m.get('commit_all_levels', False):

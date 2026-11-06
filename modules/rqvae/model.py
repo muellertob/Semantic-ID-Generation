@@ -11,7 +11,7 @@ def RQ_VAE(
         codebook_kmeans_init=True, 
         codebook_sim_vq=False, 
         codebook_layers=3, 
-        commitment_weight=0.25, 
+        beta=0.25, 
         quantization_method=QuantizeForwardMode.STE, 
         distance_mode=QuantizeDistance.L2,
         normalize=True,
@@ -31,7 +31,7 @@ def RQ_VAE(
             codebook_layers=codebook_layers,
             latent_dim=latent_dim,
             codebook_size=codebook_size,
-            commitment_weight=commitment_weight,
+            beta=beta,
             do_kmeans_init=codebook_kmeans_init,
             sim_vq=codebook_sim_vq,
             forward_mode=quantization_method,
@@ -44,5 +44,6 @@ def RQ_VAE(
             quantizer=quantizer, 
             input_dim=input_dim, 
             latent_dim=latent_dim,
-            normalize=normalize
+            normalize=normalize,
+            sum_over_dims=True
         )

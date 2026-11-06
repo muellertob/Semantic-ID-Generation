@@ -41,7 +41,6 @@ def load_trained_model(model_path, config, device, input_dim):
             hidden_dims=config.model.hidden_dimensions,
             codebook_size=config.model.codebook_size,
             codebook_layers=config.model.codebook_layers,
-            commitment_weight=config.model.commitment_weight,
             normalize=normalize
         )
         model.load_state_dict(state_dict, strict=False)

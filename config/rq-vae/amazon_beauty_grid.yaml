@@ -14,7 +14,7 @@ model:
   latent_dimension: 64            # GRID used 64; TIGER used 32
   codebook_layers: 3
   codebook_size: 128
-  commitment_weight: 0.25         # GRID used 0.25
+  beta: 3.0                       # equals our former 0.25 on losses averaged over dimensions (x 768/64), not TIGER's printed 0.25
   commit_all_levels: False        # True: every level's commitment term reaches the encoder
   quantization_method: "ste"
   distance_method: "l2"

@@ -24,7 +24,7 @@ def test_full_pipeline_precision():
         latent_dim=64,
         codebook_layers=3,
         codebook_size=128,
-        commitment_weight=0.25,
+        beta=0.25,
         quantization_method=QuantizeForwardMode.STE,
         distance_mode=QuantizeDistance.L2,
         codebook_kmeans_init=False  # explicitly called

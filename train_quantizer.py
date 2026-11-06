@@ -52,6 +52,11 @@ def create_model(config, input_dim):
         logger.info("model.normalize_inputs not specified. Defaulting to True.")
 
     if quantizer_type == "rqvae":
+        if "commitment_weight" in config.model:
+            same_beta = config.model.commitment_weight * input_dim / latent_dim
+            raise ValueError("model.commitment_weight (loss averaged over dimensions) was replaced by model.beta "
+                             "(TIGER's loss, summed over dimensions); the same weighting of the encoder terms is "
+                             f"model.beta = commitment_weight * input_dim / latent_dim = {same_beta}")
         quantization_method_str = getattr(config.model, 'quantization_method', 'ste')
         distance_method_str = getattr(config.model, 'distance_method', 'cosine')
 
@@ -75,7 +80,7 @@ def create_model(config, input_dim):
             hidden_dims=hidden_dims,
             codebook_size=config.model.codebook_size,
             codebook_layers=codebook_layers,
-            commitment_weight=config.model.commitment_weight,
+            beta=config.model.beta,
             quantization_method=quantization_method,
             distance_mode=distance_mode,
             normalize=normalize,

@@ -8,19 +8,21 @@ from schemas.quantization import QuantizeOutput, QuantizeForwardMode, QuantizeDi
 from utils.metrics import calculate_quantizer_metrics
 from utils.seed import get_seed
 
-class QuantizeLoss(nn.Module):
-    def __init__(self, commitment_weight: float = 1.0) -> None:
-        super().__init__()
-        self.commitment_weight = commitment_weight
+def squared_error(a: Tensor, b: Tensor) -> Tensor:
+    """Squared l2 distance per item (summed over the last dimension), averaged over the batch."""
+    return ((a - b) ** 2).sum(dim=-1).mean()
 
-    def forward(self, z: Tensor, z_hat: Tensor) -> Tensor:
-        # Match TIGER's Quantization Loss:
-        # Loss = ||sg[z] - z_hat||^2 + beta * ||z - sg[z_hat]||^2
-        z_no_grad = z.detach()
-        z_hat_no_grad = z_hat.detach()
-        
-        loss = F.mse_loss(z_no_grad, z_hat) + self.commitment_weight * F.mse_loss(z, z_hat_no_grad)
-        return loss
+class QuantizeLoss(nn.Module):
+    def __init__(self, beta: float = 0.25) -> None:
+        super().__init__()
+        self.beta = beta
+
+    def forward(self, z: Tensor, z_hat: Tensor) -> tuple[Tensor, Tensor]:
+        """Returns (codebook term, commitment term); the loss is their sum."""
+        # TIGER's quantization loss with squared norms: ||sg[z] - z_hat||^2 + beta * ||z - sg[z_hat]||^2
+        codebook_term = squared_error(z.detach(), z_hat)
+        commitment_term = self.beta * squared_error(z, z_hat.detach())
+        return codebook_term, commitment_term
 
 class Quantization(nn.Module):
     """
@@ -30,7 +32,7 @@ class Quantization(nn.Module):
     Args:
         latent_dim: Dimension of the latent vectors
         codebook_size: Number of vectors in the codebook
-        commitment_weight: Weight for the commitment loss
+        beta: Weight of the commitment term in the loss summed over latent dimensions
         do_kmeans_init: Whether to initialize codebook with k-means
         sim_vq: Whether to use similarity-based VQ with projection layer
         forward_mode: Quantization method to use (QuantizeForwardMode enum)
@@ -43,7 +45,7 @@ class Quantization(nn.Module):
         self,
         latent_dim: int,
         codebook_size: int,
-        commitment_weight: float = 0.25,
+        beta: float = 0.25,
         do_kmeans_init: bool = True,
         sim_vq: bool = False,
         forward_mode: QuantizeForwardMode = QuantizeForwardMode.STE,
@@ -52,7 +54,7 @@ class Quantization(nn.Module):
         super().__init__()
         self.embed_dim = latent_dim
         self.codebook_size = codebook_size
-        self.commitment_weight = commitment_weight
+        self.beta = beta
         self.do_kmeans_init = do_kmeans_init
         self.kmeans_initted = False
         self.forward_mode = forward_mode
@@ -62,7 +64,7 @@ class Quantization(nn.Module):
         self.out_proj = nn.Sequential(
             nn.Linear(latent_dim, latent_dim, bias=False) if sim_vq else nn.Identity(),
         )
-        self.quantize_loss = QuantizeLoss(commitment_weight)
+        self.quantize_loss = QuantizeLoss(beta)
         self._init_weights()
 
     def _init_weights(self):
@@ -150,7 +152,7 @@ class Quantization(nn.Module):
 
                 # For loss, use the closest codebook entry (like STE) to encourage commitment
                 closest_emb = self.get_item_embeddings(ids)
-                loss = self.quantize_loss(z=z, z_hat=closest_emb)
+                codebook_loss, commitment_loss = self.quantize_loss(z=z, z_hat=closest_emb)
 
             elif self.forward_mode == QuantizeForwardMode.STE:
                 # Straight-Through Estimation
@@ -158,7 +160,7 @@ class Quantization(nn.Module):
                 emb_out = z + (closest_emb - z).detach()
 
                 # Use the quantized embedding for loss
-                loss = self.quantize_loss(z=z, z_hat=closest_emb)
+                codebook_loss, commitment_loss = self.quantize_loss(z=z, z_hat=closest_emb)
 
             else:
                 raise ValueError(f"Unsupported forward mode: {self.forward_mode}")
@@ -168,12 +170,14 @@ class Quantization(nn.Module):
             emb_out = closest_emb
 
             # Compute loss for compatibility
-            loss = self.quantize_loss(z=z, z_hat=closest_emb)
+            codebook_loss, commitment_loss = self.quantize_loss(z=z, z_hat=closest_emb)
 
         return QuantizeOutput(
             embeddings=emb_out,
             ids=ids,
-            loss=loss,
+            loss=codebook_loss + commitment_loss,
+            # the two terms of the loss, for logging
+            metrics={"codebook_loss": codebook_loss.detach(), "commitment_loss": commitment_loss.detach()},
         )
 
 class ResidualVectorQuantizer(nn.Module):
@@ -182,7 +186,7 @@ class ResidualVectorQuantizer(nn.Module):
         codebook_layers: int, 
         latent_dim: int, 
         codebook_size: int, 
-        commitment_weight: float = 0.25, 
+        beta: float = 0.25, 
         do_kmeans_init: bool = True, 
         sim_vq: bool = False, 
         forward_mode: QuantizeForwardMode = QuantizeForwardMode.STE, 
@@ -203,7 +207,7 @@ class ResidualVectorQuantizer(nn.Module):
             Quantization(
                 latent_dim=latent_dim,
                 codebook_size=codebook_size,
-                commitment_weight=commitment_weight,
+                beta=beta,
                 do_kmeans_init=do_kmeans_init,
                 sim_vq=sim_vq,
                 forward_mode=forward_mode,
@@ -234,12 +238,14 @@ class ResidualVectorQuantizer(nn.Module):
         res = x
         quantize_loss = torch.tensor(0.0, device=x.device)
         embs, residuals, sem_ids = [], [], []
+        level_loss_terms = []
         first_residual = None
 
         for i, layer in enumerate(self.quantization_layers):
             residuals.append(res)
             quantized = layer(res, temperature=temperature)
             quantize_loss = quantize_loss + quantized.loss
+            level_loss_terms.append(quantized.metrics)
             emb, id = quantized.embeddings, quantized.ids
             if self.commit_all_levels:
                 emb = layer.get_item_embeddings(id).detach()  # codeword; the residual keeps its gradient
@@ -271,7 +277,10 @@ class ResidualVectorQuantizer(nn.Module):
                 final_residual=final_residual,
                 codebooks=codebooks
             )
-            
+            # per level, in order: the codebook and (beta-weighted) commitment terms that sum to quantize_loss
+            for term in ("codebook_loss", "commitment_loss"):
+                metrics[term] = torch.stack([m[term] for m in level_loss_terms])
+
         return QuantizeOutput(
             embeddings=quantized_latent, 
             ids=sem_ids_tensor, 

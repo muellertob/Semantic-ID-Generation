@@ -451,3 +451,8 @@ def test_calculate_quantizer_metrics_with_residuals_and_codebooks():
     assert metrics["last_centroids_norm"].item() == pytest.approx(expected_cb1_norm)
 
 
+def test_latent_norm_is_the_mean_norm_over_the_batch():
+    # norms 5 and 0
+    ids = torch.tensor([[0, 0], [1, 1]])
+    metrics = calculate_quantizer_metrics(ids, codebook_size=2, input_tensor=torch.tensor([[3.0, 4.0], [0.0, 0.0]]))
+    assert metrics["latent_norm"].item() == 2.5

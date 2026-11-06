@@ -270,10 +270,14 @@ def calculate_quantizer_metrics(
         "layer_entropies": layer_entropies
     }
     
+    # latent metrics (optional): size of the quantizer input
+    if input_tensor is not None:
+        metrics["latent_norm"] = input_tensor.norm(dim=-1).mean()
+
     # residual metrics (optional)
     if input_tensor is not None and first_residual is not None and final_residual is not None:
         # compute norms over the last dimension (latent dimension) and mean over the batch/sequence dims
-        input_norm = input_tensor.norm(dim=-1).mean().clamp(min=1e-8)
+        input_norm = metrics["latent_norm"].clamp(min=1e-8)
         first_res_norm = first_residual.norm(dim=-1).mean()
         final_res_norm = final_residual.norm(dim=-1).mean()
         

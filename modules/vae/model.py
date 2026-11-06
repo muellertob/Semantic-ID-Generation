@@ -28,8 +28,14 @@ class QuantizedAutoEncoder(nn.Module):
         input_dim: int,
         latent_dim: int,
         loss_type: str = "mse",
-        normalize: bool = True
+        normalize: bool = True,
+        sum_over_dims: bool = False
     ):
+        """
+        sum_over_dims: True sums the reconstruction error over the input dimensions per item (TIGER's squared
+        norm; RQ-VAE, whose beta is defined on that scale); False averages over all entries (FSQ).
+        Both average over the batch.
+        """
         super().__init__()
         self.encoder = encoder
         self.decoder = decoder
@@ -37,6 +43,7 @@ class QuantizedAutoEncoder(nn.Module):
         self.input_dim = input_dim
         self.latent_dim = latent_dim
         self.loss_type = loss_type
+        self.sum_over_dims = sum_over_dims
         
         if normalize:
             self.normalization_layer = nn.Sequential(
@@ -75,10 +82,11 @@ class QuantizedAutoEncoder(nn.Module):
         x_hat = self.decoder(quant_out.embeddings)
         
         # calculate reconstruction loss
-        if self.loss_type == "l1":
-            recon_loss = F.l1_loss(x_hat, normalized_x)
+        loss_fn = F.l1_loss if self.loss_type == "l1" else F.mse_loss
+        if self.sum_over_dims:
+            recon_loss = loss_fn(x_hat, normalized_x, reduction="none").sum(dim=-1).mean()
         else:
-            recon_loss = F.mse_loss(x_hat, normalized_x)
+            recon_loss = loss_fn(x_hat, normalized_x)
             
         # combine with optional quantization loss
         total_loss = recon_loss + quant_out.loss

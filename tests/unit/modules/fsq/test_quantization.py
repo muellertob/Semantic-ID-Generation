@@ -184,4 +184,3 @@ def test_residual_fsq_metrics_and_zero_input():
     assert not torch.isnan(out_zero.metrics["last_residual_rel"]).any()
     assert out_zero.metrics["first_residual_rel"].item() == 0.0
     assert out_zero.metrics["last_residual_rel"].item() == 0.0
-
