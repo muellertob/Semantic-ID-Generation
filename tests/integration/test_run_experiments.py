@@ -124,3 +124,14 @@ def test_rqvae_cal_b025_20k_differs_from_rqvae_b025_20k_only_in_commit_all_level
     assert {key for key in old if old[key] != new[key]} == {
         "model.commit_all_levels", "general.model_path", "general.meta_json"}
     assert new["model.commit_all_levels"] is True
+
+
+@pytest.mark.parametrize("variant, base", [("RQ_VAE_b025_lr001_20k", "RQ_VAE_b025_20k"),
+                                           ("RQ_VAE_cal_b025_lr001_20k", "RQ_VAE_cal_b025_20k")])
+def test_lr001_variants_differ_from_their_base_only_in_the_learning_rate_and_paths(written_config, variant, base):
+    # paired with the lr 1e-3 runs of the same seed: Adagrad's learning rate is the only change
+    old, new = written_config(base), written_config(variant)
+    assert set(old) == set(new)
+    assert {key for key in old if old[key] != new[key]} == {
+        "train.learning_rate", "general.model_path", "general.meta_json"}
+    assert (old["train.learning_rate"], new["train.learning_rate"]) == (0.001, 0.01)

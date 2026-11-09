@@ -502,6 +502,22 @@ GTS_EXPERIMENTS = [
         "codebook_size": 256,
     },
     {
+        # Adagrad lr 1e-2 instead of 1e-3: at beta 0.25 the level-1 codewords then keep up with the growing latent
+        "name": "RQ_VAE_b025_lr001_20k",
+        "quant_config": "config/rq-vae/amazon_toy_tiger_gts.yaml",
+        "quant_overrides": {"model.beta": 0.25, "train.num_epochs": 20000, "train.learning_rate": 0.01},
+        "recommender_config": "config/recommender/amazon_toy_grid_gts.yaml",
+        "codebook_size": 256,
+    },
+    {
+        "name": "RQ_VAE_cal_b025_lr001_20k",
+        "quant_config": "config/rq-vae/amazon_toy_tiger_gts.yaml",
+        "quant_overrides": {"model.commit_all_levels": True, "model.beta": 0.25, "train.num_epochs": 20000,
+                            "train.learning_rate": 0.01},
+        "recommender_config": "config/recommender/amazon_toy_grid_gts.yaml",
+        "codebook_size": 256,
+    },
+    {
         "name": "FSQ_20k",  # TIGER's Stage-1 length (20k epochs), as for RQ-VAE
         "quant_config": "config/fsq/amazon_toy_gts.yaml",
         "quant_overrides": {"train.num_epochs": 20000},
