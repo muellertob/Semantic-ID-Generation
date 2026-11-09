@@ -194,9 +194,10 @@ class ResidualVectorQuantizer(nn.Module):
         commit_all_levels: bool = False
     ):
         """
-        commit_all_levels: False (TIGER) subtracts each level's straight-through output, so only the
-        level-1 commitment term reaches the encoder. True subtracts the detached codeword and applies
-        one straight-through step to the sum, so every level's term does (Lee et al. 2022, Eq. 7). STE only.
+        commit_all_levels: False (as the GRID and RQ-VAE-Recommender code) subtracts each level's
+        straight-through output, so only the level-1 commitment term reaches the encoder. True subtracts
+        the detached codeword and applies one straight-through step to the sum, so every level's term does
+        (Lee et al. 2022, Eq. 7; TIGER's loss read literally). STE only.
         """
         super().__init__()
         self.codebook_layers = codebook_layers

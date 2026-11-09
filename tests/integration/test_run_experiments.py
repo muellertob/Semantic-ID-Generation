@@ -41,7 +41,7 @@ def written_config(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("variant, commit_all_levels", [("RQ_VAE", False), ("RQ_VAE_cal", True)])
 def test_gts_rqvae_variants_set_commit_all_levels(written_config, variant, commit_all_levels):
-    # RQ_VAE keeps TIGER's residual update; RQ_VAE_cal enables commit_all_levels
+    # RQ_VAE keeps the residual update of the GRID and RQ-VAE-Recommender code; RQ_VAE_cal enables commit_all_levels
     config = written_config(variant)
     assert (config["model.commit_all_levels"], config["general.seed"]) == (commit_all_levels, 42)
 
