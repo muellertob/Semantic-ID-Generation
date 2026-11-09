@@ -494,6 +494,41 @@ GTS_EXPERIMENTS = [
         "is_rqkmeans": True,
         "codebook_size": 256,
     },
+    {
+        "name": "RQ_VAE_cal_b025_20k",  # TIGER's printed objective read literally: commitment at every level, beta 0.25
+        "quant_config": "config/rq-vae/amazon_toy_tiger_gts.yaml",
+        "quant_overrides": {"model.commit_all_levels": True, "model.beta": 0.25, "train.num_epochs": 20000},
+        "recommender_config": "config/recommender/amazon_toy_grid_gts.yaml",
+        "codebook_size": 256,
+    },
+    {
+        "name": "FSQ_20k",  # TIGER's Stage-1 length (20k epochs), as for RQ-VAE
+        "quant_config": "config/fsq/amazon_toy_gts.yaml",
+        "quant_overrides": {"train.num_epochs": 20000},
+        "recommender_config": "config/recommender/amazon_toy_grid_fsq_gts.yaml",
+        "codebook_size": 288,
+    },
+    {
+        "name": "Residual_FSQ_Simple_HighDim_20k",
+        "quant_config": "config/fsq/amazon_toy_rfsq_simple_highdim_gts.yaml",
+        "quant_overrides": {"train.num_epochs": 20000},
+        "recommender_config": "config/recommender/amazon_toy_grid_fsq_gts.yaml",
+        "codebook_size": 288,
+    },
+    {
+        "name": "Residual_FSQ_Simple_LowDim_20k",
+        "quant_config": "config/fsq/amazon_toy_rfsq_simple_lowdim_gts.yaml",
+        "quant_overrides": {"train.num_epochs": 20000},
+        "recommender_config": "config/recommender/amazon_toy_grid_fsq_gts.yaml",
+        "codebook_size": 288,
+    },
+    {
+        "name": "Residual_FSQ_Complex_20k",
+        "quant_config": "config/fsq/amazon_toy_rfsq_complex_gts.yaml",
+        "quant_overrides": {"train.num_epochs": 20000},
+        "recommender_config": "config/recommender/amazon_toy_grid_fsq_gts.yaml",
+        "codebook_size": 288,
+    },
 ]
 
 

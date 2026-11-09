@@ -87,14 +87,18 @@ def test_rqvae_generate_config_keeps_the_base_input_settings(written_config):
     assert (config["data.input_normalization"], config["model.normalize_inputs"]) == ("none", True)
 
 
-def test_recommender_train_config_names_the_run_after_the_variant(written_config):
-    # RQ_VAE and RQ_VAE_cal share the sid_type, so only the variant name keeps their checkpoints apart
-    assert written_config("RQ_VAE_cal", "recommender")["general.run_name"] == "RQ_VAE_cal_seed_42"
+@pytest.mark.parametrize("variant", ["RQ_VAE_cal", "FSQ_20k"])
+def test_recommender_train_config_names_the_run_after_the_variant(written_config, variant):
+    # each variant shares the sid_type with its base (RQ_VAE, FSQ), so only the variant name keeps their checkpoints apart
+    assert written_config(variant, "recommender")["general.run_name"] == f"{variant}_seed_42"
 
 
 @pytest.mark.parametrize("variant, base", [("RQ_VAE_20k", "RQ_VAE"), ("RQ_VAE_cal_20k", "RQ_VAE_cal"),
                                            ("RQ_VAE_center_20k", "RQ_VAE_center"), ("RQ_VAE_b025_20k", "RQ_VAE_b025"),
-                                           ("RQ_VAE_cal_b2_20k", "RQ_VAE_cal_b2")])
+                                           ("RQ_VAE_cal_b2_20k", "RQ_VAE_cal_b2"), ("FSQ_20k", "FSQ"),
+                                           ("Residual_FSQ_Simple_HighDim_20k", "Residual_FSQ_Simple_HighDim"),
+                                           ("Residual_FSQ_Simple_LowDim_20k", "Residual_FSQ_Simple_LowDim"),
+                                           ("Residual_FSQ_Complex_20k", "Residual_FSQ_Complex")])
 def test_20k_variants_differ_from_their_base_only_in_the_epochs_and_paths(written_config, variant, base):
     # paired with the 2000-epoch runs of the same seed: the Stage-1 length is the only change
     old, new = written_config(base), written_config(variant)
@@ -111,3 +115,12 @@ def test_beta_variants_differ_from_their_base_only_in_beta_and_paths(written_con
     assert set(old) == set(new)
     assert {key for key in old if old[key] != new[key]} == {"model.beta", "general.model_path", "general.meta_json"}
     assert new["model.beta"] == beta
+
+
+def test_rqvae_cal_b025_20k_differs_from_rqvae_b025_20k_only_in_commit_all_levels_and_paths(written_config):
+    # TIGER's printed loss sums the commitment over all levels with beta 0.25; its pair is the default beta 0.25, 20k
+    old, new = written_config("RQ_VAE_b025_20k"), written_config("RQ_VAE_cal_b025_20k")
+    assert set(old) == set(new)
+    assert {key for key in old if old[key] != new[key]} == {
+        "model.commit_all_levels", "general.model_path", "general.meta_json"}
+    assert new["model.commit_all_levels"] is True
