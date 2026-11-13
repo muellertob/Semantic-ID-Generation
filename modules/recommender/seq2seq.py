@@ -137,6 +137,7 @@ class TigerSeq2Seq(nn.Module):
         Applies offsets to match the model's vocabulary space.
         
         :param codebooks: Tensor of shape [Num_Items, Codebook_Layers + 1] containing raw indices.
+        :raises ValueError: if the number of columns or the value range does not fit the vocabulary.
         """
         device = self.item_offsets.device
         if codebooks.device != device:
@@ -146,7 +147,21 @@ class TigerSeq2Seq(nn.Module):
         # codebooks: [N, L]; item_offsets: [L]
         if codebooks.shape[1] != self.item_offsets.shape[0]:
              raise ValueError(f"Codebook shape {codebooks.shape} does not match item offsets shape {self.item_offsets.shape}")
-        
+
+        # every code must lie inside the token range of its column: a larger code would get the
+        # token of another column's code or of a special token and silently share its embedding
+        limits = torch.tensor([self.codebook_size] * self.codebook_layers + [self.collision_vocab_size], device=device)
+        out_of_range = (codebooks < 0) | (codebooks >= limits)
+        if out_of_range.any():
+            columns = out_of_range.any(dim=0).nonzero().flatten().tolist()
+            raise ValueError(
+                f"Semantic IDs have values outside the vocabulary in column(s) {columns}: "
+                f"min per column {codebooks.min(dim=0).values.tolist()}, "
+                f"max per column {codebooks.max(dim=0).values.tolist()}, "
+                f"allowed 0 to {(limits - 1).tolist()} (codebook_size={self.codebook_size}). "
+                f"The config does not fit these Semantic IDs."
+            )
+
         # apply offsets to raw codebook indices to match vocabulary   
         shifted_codebooks = codebooks + self.item_offsets.unsqueeze(0)
         self.register_buffer('codebooks', shifted_codebooks)
