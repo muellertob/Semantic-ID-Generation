@@ -1,6 +1,6 @@
 """
-Unit tests for modules/recommender/seq2seq.py: the value-range check of set_codebooks and the
-decoder cache of beam_search.
+Unit tests for modules/recommender/seq2seq.py: the value-range check of set_codebooks, the
+decoder cache of beam_search and the user tokens (switched off with user_tokens=0).
 """
 from unittest.mock import Mock, patch
 
@@ -92,3 +92,76 @@ def test_beam_search_raises_if_the_decoder_cache_cannot_be_reordered():
     with patch.object(model.backbone.decoder, "forward", return_value=decoder_output):
         with pytest.raises(RuntimeError, match="Cannot reorder the decoder cache of type tuple"):
             model.beam_search(items[[2, 4]].unsqueeze(0), beam_size=2)
+
+
+# Encoder input of the fixture model (codebook_layers=2, codebook_size=4) for one history item
+# [1, 0, 0] and the raw user id 7. Item tokens = code + offset (0, 4, 8). Output vocabulary:
+# 2*4 level + 4 collision + 3 special (pad, bos, eos) = 15 tokens, so user tokens start at 15.
+#
+#   user_tokens   user token          encoder input
+#   0 (off)       none                [1, 4, 8]
+#   3             15 + (7 mod 3)=16   [16, 1, 4, 8]
+def tiny_model(**kwargs):
+    return TigerSeq2Seq(codebook_layers=2, codebook_size=4, d_model=16, d_kv=8, d_ff=32, num_layers=1, num_heads=2, **kwargs)
+
+
+ONE_ITEM_HISTORY = torch.tensor([[[1, 0, 0]]])
+
+
+def test_user_tokens_off_leaves_only_the_history_in_the_encoder_input():
+    encoder_input = tiny_model(user_tokens=0).process_input_tuples(ONE_ITEM_HISTORY, user_ids=torch.tensor([7]))
+
+    assert encoder_input.tolist() == [[1, 4, 8]]
+
+
+def test_user_tokens_off_removes_the_user_rows_from_the_vocabulary():
+    assert tiny_model(user_tokens=0).backbone.shared.num_embeddings == 15
+
+
+def test_user_tokens_on_hash_the_raw_user_id_modulo_the_number_of_slots():
+    encoder_input = tiny_model(user_tokens=3).process_input_tuples(ONE_ITEM_HISTORY, user_ids=torch.tensor([7]))
+
+    assert encoder_input.tolist() == [[16, 1, 4, 8]]
+
+
+def test_forward_with_user_ids_adds_no_user_token_to_the_encoder_input_when_off():
+    # the training and test scripts always pass user_ids (they also feed the per-user metrics)
+    history = torch.zeros((2, 3, 3), dtype=torch.long)
+
+    out = tiny_model(user_tokens=0)(history, user_ids=torch.arange(2))
+
+    # 3 items * 3 tokens, no user token in front
+    assert out["encoder_attention_mask"].tolist() == [[1] * 9] * 2
+
+
+def test_encoder_output_does_not_depend_on_the_user_id_with_user_tokens_off():
+    model = tiny_model(user_tokens=0).eval()
+    history = torch.tensor([[[1, 0, 0], [2, 3, 1]], [[3, 3, 0], [0, 1, 1]]])
+
+    with torch.no_grad():
+        with_ids = model(history, user_ids=torch.tensor([0, 1]))["encoder_last_hidden_state"]
+        without_ids = model(history)["encoder_last_hidden_state"]
+
+    assert torch.equal(with_ids, without_ids)
+
+
+def test_beam_search_ignores_the_user_id_with_user_tokens_off():
+    torch.manual_seed(0)
+    model = tiny_model(user_tokens=0).eval()
+    model.set_codebooks(torch.tensor([[1, 2, 0], [1, 3, 0], [2, 0, 0]]))
+    history = torch.tensor([[[1, 2, 0]], [[2, 0, 0]]])
+
+    with_ids = model.beam_search(history, user_ids=torch.tensor([0, 1]), beam_size=3)
+    without_ids = model.beam_search(history, beam_size=3)
+
+    assert with_ids.tolist() == without_ids.tolist()
+
+
+def test_negative_number_of_user_tokens_is_rejected():
+    with pytest.raises(ValueError, match="user_tokens must be 0"):
+        tiny_model(user_tokens=-1)
+
+
+def test_user_tokens_are_off_by_default():
+    # a config without the key must not switch user tokens on
+    assert tiny_model().user_vocab_size == 0

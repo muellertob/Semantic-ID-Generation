@@ -151,7 +151,8 @@ Tests are managed using `pytest`. Configuration options are defined in `pyprojec
 
 The `modules/recommender/seq2seq.py` file implements the **TIGER** architecture using a **T5 backbone**.
 - **Generative Retrieval:** Predicts next item SIDs autoregressively based on user history.
-- **Unified Vocabulary:** Manages offsets to map User IDs, Semantic IDs, and Collision Tokens into a single embedding space.
+- **Unified Vocabulary:** Manages offsets to map Semantic IDs, Collision Tokens and (optionally) user tokens into a single embedding space.
+- **User tokens:** `seq2seq.user_tokens` is the number of user token slots; a raw user id is hashed to a slot (id mod slots) and prepended to the encoder input. `0` (the default) switches them off: no user token in the input, no user rows in the vocabulary. Batches still carry `user_ids` for the per-user metrics.
 - **Continuous Generation:** No EOS token — flexible Recommendation@K via item-based generation.
 
 ## SASRec Baseline

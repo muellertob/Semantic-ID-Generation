@@ -10,7 +10,7 @@ Covers:
   - Prefix branching: two items that share a prefix both stay in the beam
   - Offset handling: beam search returns global IDs; metric fix verified
   - Forward pass: loss computation, logit shape, encoder-only mode
-  - process_input_tuples: padding preservation, offset application, user token prepending
+  - process_input_tuples: padding preservation, offset application
 """
 import pytest
 import torch
@@ -464,7 +464,7 @@ class TestForwardPass:
 
 @pytest.mark.integration
 class TestProcessInputTuples:
-    """Verifies that process_input_tuples correctly handles padding, offsets, and user tokens."""
+    """Verifies that process_input_tuples correctly handles padding and offsets."""
 
     @pytest.fixture(scope="class")
     def model(self):
@@ -501,22 +501,6 @@ class TestProcessInputTuples:
         tuples = torch.zeros((4, 5, 3), dtype=torch.long)
         out = model.process_input_tuples(tuples)
         assert out.shape == (4, 5 * 3)
-
-    def test_output_shape_with_user_ids(self, model):
-        """Output must be [batch, 1 + seq_len * tuple_size] when user IDs are provided."""
-        tuples = torch.zeros((4, 5, 3), dtype=torch.long)
-        user_ids = torch.arange(4)
-        out = model.process_input_tuples(tuples, user_ids=user_ids)
-        assert out.shape == (4, 1 + 5 * 3)
-
-    def test_user_token_is_prepended_within_valid_range(self, model):
-        """First token in the output must be within the user token range."""
-        tuples = torch.zeros((1, 1, 3), dtype=torch.long)
-        user_ids = torch.tensor([0])
-        out = model.process_input_tuples(tuples, user_ids=user_ids)
-        user_token = out[0, 0].item()
-        assert user_token >= model.user_offset
-        assert user_token < model.user_offset + model.user_vocab_size
 
 
 # ---------------------------------------------------------------------------

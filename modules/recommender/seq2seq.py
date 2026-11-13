@@ -7,15 +7,23 @@ from transformers import T5Config, T5Model
 logger = logging.getLogger(__name__)
 
 class TigerSeq2Seq(nn.Module):
-    def __init__(self, codebook_layers=3, codebook_size=256, user_tokens=2000, d_model=512, d_kv=64, d_ff=2048, num_layers=4, num_heads=6, dropout=0.1, activation_fn="relu"):
+    def __init__(self, codebook_layers=3, codebook_size=256, user_tokens=0, d_model=512, d_kv=64, d_ff=2048, num_layers=4, num_heads=6, dropout=0.1, activation_fn="relu"):
+        """
+        :param user_tokens: Number of user token slots. 0 switches user tokens off: the encoder input holds
+                            only the history and the vocabulary has no user rows. With n > 0, a raw user ID
+                            is mapped to one of n tokens by the hashing trick (user ID mod n) and prepended
+                            to the encoder input.
+        """
         super().__init__()
+        if user_tokens < 0:
+            raise ValueError(f"user_tokens must be 0 (user tokens off) or the number of user token slots, got {user_tokens}")
         self.codebook_layers = codebook_layers
         self.codebook_size = codebook_size
 
         # VOCABULARY SIZE
         self.semantic_vocab_size = codebook_layers * codebook_size
         self.collision_vocab_size = codebook_size # additional tokens for ID collisions
-        self.user_vocab_size = user_tokens
+        self.user_vocab_size = user_tokens # 0: user tokens off
 
         # only semantic, collision, and special tokens can be output by the decoder
         self.output_vocab_size = (self.semantic_vocab_size + 
@@ -181,9 +189,10 @@ class TigerSeq2Seq(nn.Module):
 
         :param input_tuples: Tensor of shape [Batch, Seq_Len, Tuple_Size] containing discrete codes.
                              Padding should be represented by -1.
-        :param user_ids: Optional Tensor of shape [Batch] containing user IDs. 
-                         If provided, a user token is prepended to the sequence.
-        :return: Flattened Tensor of shape [Batch, Sequence_Length] (plus 1 if user_ids provided)
+        :param user_ids: Optional Tensor of shape [Batch] containing user IDs.
+                         If provided and user tokens are on (user_vocab_size > 0), a user token is
+                         prepended to the sequence. With user tokens off the IDs are ignored.
+        :return: Flattened Tensor of shape [Batch, Sequence_Length] (plus 1 if a user token is prepended)
                  containing global vocabulary indices.
         """
         batch_size, seq_len, _ = input_tuples.shape
@@ -203,8 +212,8 @@ class TigerSeq2Seq(nn.Module):
 
         flat_sequence = offset_tuples.view(batch_size, -1) # [B, T, 4] -> [B, T * 4]
 
-        if user_ids is None:
-            # shortcut when no user IDs are provided
+        if user_ids is None or self.user_vocab_size == 0:
+            # no user IDs provided, or user tokens are off (callers pass user_ids for the per-user metrics)
             return flat_sequence
         
         # PROCESS USER TOKENS
