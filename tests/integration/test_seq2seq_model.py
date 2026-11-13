@@ -7,7 +7,7 @@ Covers:
   - Constrained beam search: valid token forcing via prefix masks (all steps verified)
   - Dead beam handling: NaN prevention with sink nodes
   - Sequential multi-item generation: Trie state reset between items
-  - KV-cache reordering: prefix branching with shared encoder state
+  - Prefix branching: two items that share a prefix both stay in the beam
   - Offset handling: beam search returns global IDs; metric fix verified
   - Forward pass: loss computation, logit shape, encoder-only mode
   - process_input_tuples: padding preservation, offset application, user token prepending
@@ -365,8 +365,8 @@ def test_generate_sequential_items_constrained(single_item_model):
 
 
 @pytest.mark.integration
-def test_beam_search_cache_reordering(two_item_model):
-    """Two items sharing a prefix force cache duplication and reordering."""
+def test_beam_search_keeps_two_items_that_share_a_prefix(two_item_model):
+    """Two items sharing their first token must both be returned, each following the trie."""
     model = two_item_model
     history = torch.tensor([[[-1, -1, -1]]])
 

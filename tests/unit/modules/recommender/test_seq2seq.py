@@ -1,6 +1,9 @@
 """
-Unit tests for modules/recommender/seq2seq.py: the value-range check of set_codebooks.
+Unit tests for modules/recommender/seq2seq.py: the value-range check of set_codebooks and the
+decoder cache of beam_search.
 """
+from unittest.mock import Mock, patch
+
 import pytest
 import torch
 
@@ -42,3 +45,50 @@ def test_set_codebooks_rejects_a_negative_code(model):
     # -1 marks padding in the history input, so it cannot be a code of an item
     with pytest.raises(ValueError, match=r"column\(s\) \[1\].*min per column \[0, -1, 0\]"):
         model.set_codebooks(torch.tensor([[0, -1, 0]]))
+
+
+# Six items (codebook_layers=3, codebook_size=4; last column = collision code) whose prefixes
+# branch at every level, so the beams change their parent beam between the decoding steps:
+#
+#   item   level 1   level 2   level 3   collision
+#   0      0         0         0         0
+#   1      0         0         1         0
+#   2      0         1         2         0
+#   3      1         0         3         0
+#   4      1         2         0         0
+#   5      1         2         0         1
+BRANCHING_ITEMS = [[0, 0, 0, 0], [0, 0, 1, 0], [0, 1, 2, 0], [1, 0, 3, 0], [1, 2, 0, 0], [1, 2, 0, 1]]
+
+
+def test_beam_search_with_cache_ranks_items_by_their_teacher_forced_log_probability():
+    torch.manual_seed(0)
+    model = TigerSeq2Seq(codebook_layers=3, codebook_size=4, d_model=16, d_kv=8, d_ff=32, num_layers=2, num_heads=2).eval()
+    items = torch.tensor(BRANCHING_ITEMS)
+    model.set_codebooks(items)
+    # three users, so that a skipped cache reordering fails reliably: with one user the
+    # ranking stayed right by chance for some seeds
+    history = items[torch.tensor([[2, 4], [0, 3], [5, 1]])]
+
+    # beam size = number of items: no prefix is dropped, so the beam search is exact
+    predictions = model.beam_search(history, beam_size=6)
+
+    # the same ranking without a cache: one teacher-forced forward pass per user and item
+    expected = []
+    with torch.no_grad():
+        for user_history in history:
+            logits = model(user_history.repeat(6, 1, 1), items.unsqueeze(1))["logits"][:, :-1]
+            token_log_probs = torch.log_softmax(logits, dim=-1).gather(-1, model.codebooks.unsqueeze(-1)).squeeze(-1)
+            expected.append(model.codebooks[token_log_probs.sum(dim=-1).argsort(descending=True)].tolist())
+    assert predictions.tolist() == expected
+
+
+def test_beam_search_raises_if_the_decoder_cache_cannot_be_reordered():
+    model = TigerSeq2Seq(codebook_layers=3, codebook_size=4, d_model=16, d_kv=8, d_ff=32, num_layers=2, num_heads=2).eval()
+    items = torch.tensor(BRANCHING_ITEMS)
+    model.set_codebooks(items)
+    # a decoder output whose cache is a plain tuple, which has no method to reorder it
+    decoder_output = Mock(last_hidden_state=torch.zeros(2, 1, 16), past_key_values=())
+
+    with patch.object(model.backbone.decoder, "forward", return_value=decoder_output):
+        with pytest.raises(RuntimeError, match="Cannot reorder the decoder cache of type tuple"):
+            model.beam_search(items[[2, 4]].unsqueeze(0), beam_size=2)

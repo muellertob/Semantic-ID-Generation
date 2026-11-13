@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import logging
+import transformers
 from transformers import T5Config, T5Model
 
 logger = logging.getLogger(__name__)
@@ -415,7 +416,14 @@ class TigerSeq2Seq(nn.Module):
                     past_key_values = self.backbone.decoder._reorder_cache(past_key_values, global_beam_indices)
                 elif hasattr(past_key_values, 'reorder_cache'):
                     past_key_values.reorder_cache(global_beam_indices)
-            
+                else:
+                    # without reordering every beam would continue with the cache of another prefix:
+                    # the output would still be valid Semantic IDs, but ranked by wrong scores
+                    raise RuntimeError(
+                        f"Cannot reorder the decoder cache of type {type(past_key_values).__name__} "
+                        f"to the new beam order (transformers {transformers.__version__})."
+                    )
+
         # remove BOS and reshape
         predictions = current_sequences[:, 1:].view(batch_size, beam_size, total_steps)
         
