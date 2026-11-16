@@ -1,4 +1,6 @@
 import math
+from unittest.mock import patch
+
 import pytest
 import torch
 from modules.fsq.quantization import FSQ, round_ste, ProjectionBlock, FSQLayer, ResidualFSQ, FixedScaleResidualFSQ
@@ -315,3 +317,109 @@ def test_fixed_scale_residual_fsq_metric_names_match_residual_fsq():
     out = FixedScaleResidualFSQ(level_list=[3], codebook_layers=3)(torch.zeros(2, 1))
 
     assert set(out.metrics) == set(reference_metrics)
+
+
+# Quantizer dropout. Three examples, all with soft-clamped input -0.6, L = 3, 3 levels:
+# level   grid (scaled)          residual in   output   digit
+# 1       {-1, 0, 1}             -0.6          -1       0
+# 2       {-1/3, 0, 1/3}          0.4           1/3     2
+# 3       {-1/9, 0, 1/9}          1/15          1/9     2
+# sum of the first n levels: n=1: -1, n=2: -2/3, n=3: -5/9
+def _dropout_latent():
+    return _latent_for([[-0.6], [-0.6], [-0.6]], [3])
+
+
+def _draws(rand, n):
+    return (patch("torch.rand", return_value=torch.tensor(rand).reshape(3, 1)),
+            patch("torch.randint", return_value=torch.tensor(n).reshape(3, 1)))
+
+
+def test_quantizer_dropout_sums_only_the_first_n_levels_of_a_selected_example():
+    # p = 1 selects every example, so each one gets the sum of its first n levels
+    rand_draw, n_draw = _draws([0.0, 0.0, 0.0], [1, 2, 3])
+    with rand_draw, n_draw:
+        out = FixedScaleResidualFSQ([3], codebook_layers=3, quantizer_dropout=1.0)(_dropout_latent())
+
+    _assert_values_close(out.embeddings, [[-1.0], [-2 / 3], [-5 / 9]])
+
+
+def test_quantizer_dropout_shortens_only_examples_whose_random_number_is_below_p():
+    # random number < 0.5 selects: examples 1 and 3 are selected (n = 1, 2); example 2 is not, so it keeps all
+    # levels although its n is 1
+    rand_draw, n_draw = _draws([0.4, 0.6, 0.4], [1, 1, 2])
+    with rand_draw, n_draw:
+        out = FixedScaleResidualFSQ([3], codebook_layers=3, quantizer_dropout=0.5)(_dropout_latent())
+
+    _assert_values_close(out.embeddings, [[-1.0], [-5 / 9], [-2 / 3]])
+
+
+def test_quantizer_dropout_does_not_change_the_ids():
+    # the Semantic ID must not depend on the draw: every example has digits 0, 2, 2
+    rand_draw, n_draw = _draws([0.0, 0.0, 0.0], [1, 2, 3])
+    with rand_draw, n_draw:
+        out = FixedScaleResidualFSQ([3], codebook_layers=3, quantizer_dropout=1.0)(_dropout_latent())
+
+    assert torch.equal(out.ids, torch.tensor([[0, 2, 2]] * 3, dtype=torch.int32))
+
+
+def test_quantizer_dropout_is_off_in_eval_mode():
+    # Semantic-ID generation and evaluation run without randomness: all levels, whatever the draws
+    quantizer = FixedScaleResidualFSQ([3], codebook_layers=3, quantizer_dropout=1.0).eval()
+    rand_draw, n_draw = _draws([0.0, 0.0, 0.0], [1, 2, 3])
+    with rand_draw, n_draw:
+        out = quantizer(_dropout_latent())
+
+    _assert_values_close(out.embeddings, [[-5 / 9]] * 3)
+
+
+def test_quantizer_dropout_defaults_to_off():
+    # draws that would shorten every example change nothing without the option, so earlier runs stay unchanged
+    rand_draw, n_draw = _draws([0.0, 0.0, 0.0], [1, 1, 1])
+    with rand_draw, n_draw:
+        out = FixedScaleResidualFSQ([3], codebook_layers=3)(_dropout_latent())
+
+    _assert_values_close(out.embeddings, [[-5 / 9]] * 3)
+
+
+def test_no_random_numbers_are_drawn_without_quantizer_dropout():
+    # runs without the option must leave the global random state as it was before the option existed
+    rand_draw, n_draw = _draws([0.0, 0.0, 0.0], [1, 1, 1])
+    with rand_draw as rand, n_draw as randint:
+        FixedScaleResidualFSQ([3], codebook_layers=3)(_dropout_latent())
+
+    rand.assert_not_called()
+    randint.assert_not_called()
+
+
+def test_quantizer_dropout_draws_one_selection_and_one_length_per_example():
+    # one draw per example, not per batch; n runs from 1 (never no level) to the number of levels inclusive
+    rand_draw, n_draw = _draws([0.0, 0.0, 0.0], [1, 2, 3])
+    with rand_draw as rand, n_draw as randint:
+        FixedScaleResidualFSQ([3], codebook_layers=3, quantizer_dropout=1.0)(_dropout_latent())
+
+    rand.assert_called_once_with(3, 1)
+    randint.assert_called_once_with(1, 4, (3, 1))
+
+
+def test_quantizer_dropout_passes_no_gradient_through_a_dropped_level():
+    # Two examples with soft-clamped input 1.3, L = 3, 3 levels:
+    # level   residual in   share of the level's range   passes gradient   kept by
+    # 1       1.3           1.3 (hard clamp at 1)        no                examples 1 and 2
+    # 2       0.3           0.9                          yes               example 2
+    # example 1: 0; example 2: 1 times the slope of the soft clamp, 1 - (1.3 / 1.5)^2 = 0.248889
+    latent = _latent_for([[1.3], [1.3]], [3]).requires_grad_()
+    rand_draw = patch("torch.rand", return_value=torch.zeros(2, 1))
+    n_draw = patch("torch.randint", return_value=torch.tensor([[1], [2]]))
+    with rand_draw, n_draw:
+        out = FixedScaleResidualFSQ([3], codebook_layers=3, quantizer_dropout=1.0)(latent)
+    out.embeddings.sum().backward()
+
+    _assert_values_close(latent.grad, [[0.0], [0.248889]])
+
+
+def test_quantizer_dropout_outside_zero_to_one_is_rejected():
+    # a typo such as 1.5 would otherwise run as full dropout
+    with pytest.raises(ValueError) as error:
+        FixedScaleResidualFSQ([3], quantizer_dropout=1.5)
+
+    assert str(error.value) == "quantizer_dropout must be a probability between 0 and 1, got 1.5"

@@ -43,3 +43,10 @@ def test_fixed_scale_residual_fsq_id_names_the_values_per_channel_and_no_project
     # the first model file; the quantizer has no projection to name
     assert generate_model_id(_rfsq_fixed_config()) == (
         "rfsq_fixed-amazon-toys-bs256-norm_none-hd512_256_128-ld3-l3-levels8_6_6-lr0.001-wd0-ep2000")
+
+
+@pytest.mark.parametrize("quantizer_dropout, suffix", [(0.0, ""), (0.5, "-qd0.5")])
+def test_fixed_scale_residual_fsq_id_marks_the_quantizer_dropout(quantizer_dropout, suffix):
+    # runs with different dropout probabilities must not share a model file
+    assert generate_model_id(_rfsq_fixed_config(quantizer_dropout=quantizer_dropout)) == (
+        "rfsq_fixed-amazon-toys-bs256-norm_none-hd512_256_128-ld3-l3-levels8_6_6-lr0.001-wd0-ep2000" + suffix)

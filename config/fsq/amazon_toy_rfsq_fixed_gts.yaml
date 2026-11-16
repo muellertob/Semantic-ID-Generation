@@ -19,6 +19,7 @@ model:
   codebook_layers: 3              # Number of residual quantizer stages
   level_list: [8, 6, 6]           # Possible values per channel at every stage
   loss_type: l1
+  quantizer_dropout: 0.0          # probability that an item is trained with only its first n levels (n uniform)
   normalize_inputs: True          # VAE model-internal input normalization layer (BatchNorm + L2 Norm)
 
 # training configuration (FSQ)

@@ -44,6 +44,10 @@ def create_model(config, input_dim):
     hidden_dims = config.model.hidden_dimensions
     codebook_layers = config.model.codebook_layers
     loss_type = getattr(config.model, 'loss_type', 'mse')
+    quantizer_dropout = config.model.get("quantizer_dropout", 0.0)
+    if quantizer_dropout and quantizer_type != "rfsq_fixed":
+        raise ValueError("model.quantizer_dropout is only implemented for quantizer_type 'rfsq_fixed', "
+                         f"got '{quantizer_type}'")
 
     if "normalize_inputs" in config.model:
         normalize = config.model.normalize_inputs
@@ -114,9 +118,11 @@ def create_model(config, input_dim):
             latent_dim=latent_dim,
             level_list=level_list,
             loss_type=loss_type,
-            normalize=normalize
+            normalize=normalize,
+            quantizer_dropout=quantizer_dropout
         )
-        logger.info(f"Created fixed-scale ResidualFSQ AutoEncoder with layers={codebook_layers}, level_list={level_list}")
+        logger.info(f"Created fixed-scale ResidualFSQ AutoEncoder with layers={codebook_layers}, "
+                    f"level_list={level_list}, quantizer_dropout={quantizer_dropout}")
 
     elif quantizer_type == "fsq":
         level_list = config.model.level_list

@@ -62,3 +62,20 @@ def test_the_shipped_fixed_scale_config_builds_with_288_values_per_level():
     # the model is only built if latent_dimension and level_list in the file fit together; 8 * 6 * 6 = 288
     model = create_model(OmegaConf.load("config/fsq/amazon_toy_rfsq_fixed_gts.yaml"), input_dim=768)
     assert model.quantizer.codebook_size == 288
+
+
+def test_create_model_passes_the_quantizer_dropout_to_the_fixed_scale_quantizer():
+    # the default is 0, so 0.5 shows that the config value arrives
+    model = create_model(_rfsq_fixed_config(quantizer_dropout=0.5), input_dim=8)
+    assert model.quantizer.quantizer_dropout == 0.5
+
+
+def test_create_model_rejects_quantizer_dropout_for_another_quantizer_type():
+    # the run would otherwise train without dropout under a config that claims it
+    config = OmegaConf.create({"model": {
+        "quantizer_type": "rfsq", "latent_dimension": 2, "hidden_dimensions": [4], "codebook_layers": 2,
+        "level_list": [3, 2], "inner_dim": 4, "normalize_inputs": False, "quantizer_dropout": 0.5}})
+    with pytest.raises(ValueError) as error:
+        create_model(config, input_dim=8)
+
+    assert str(error.value) == "model.quantizer_dropout is only implemented for quantizer_type 'rfsq_fixed', got 'rfsq'"

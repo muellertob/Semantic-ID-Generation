@@ -46,6 +46,9 @@ def generate_model_id(config: Dict) -> str:
                 f"l{codebook_layers}-levels{levels_str}-{proj_str}"
                 f"lr{t.get('learning_rate', '')}-wd{t.get('weight_decay', '')}-ep{t.get('num_epochs', '')}"
             )
+            # runs with different dropout probabilities must not share a model file
+            if quantizer_type == 'rfsq_fixed' and m.get('quantizer_dropout', 0):
+                model_id += f"-qd{m.get('quantizer_dropout')}"
         # RQ-VAE specific model ID
         else:
             codebook_size = m.get('codebook_size', '')

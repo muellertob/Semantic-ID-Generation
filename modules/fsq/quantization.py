@@ -223,9 +223,17 @@ class FixedScaleResidualFSQ(nn.Module):
     Unlike that implementation, the residual is not detached: the gradient of the output with respect to
     the soft-clamped input is 1 where any level is inside its hard clamp, else 0. With a detached
     residual each such level would add 1.
+
+    Quantizer dropout (`quantizer_dropout` = p, training only): each input example is selected with
+    probability p (Kumar et al., Sec. 3.3, https://arxiv.org/abs/2306.06546); a selected example draws n
+    uniformly from 1..codebook_layers and only its first n levels are summed (SoundStream, Sec. III-C).
+    The ids always use all levels.
     """
-    def __init__(self, level_list: List[int], codebook_layers: int = 3):
+    def __init__(self, level_list: List[int], codebook_layers: int = 3, quantizer_dropout: float = 0.0):
         super().__init__()
+        if not 0 <= quantizer_dropout <= 1:
+            raise ValueError(f"quantizer_dropout must be a probability between 0 and 1, got {quantizer_dropout}")
+        self.quantizer_dropout = quantizer_dropout
         self.level_list = level_list
         self.codebook_layers = codebook_layers
         self.codebook_size = 1
@@ -244,7 +252,7 @@ class FixedScaleResidualFSQ(nn.Module):
     def forward(self, x: torch.Tensor, **kwargs) -> QuantizeOutput:
         bounded = (x / self.clamp_value).tanh() * self.clamp_value
         residual = bounded
-        quantized_out = 0
+        level_outputs = []
         first_residual = None
         indices_stack = []
 
@@ -258,7 +266,16 @@ class FixedScaleResidualFSQ(nn.Module):
             residual = residual - q
             if i == 0:
                 first_residual = residual
-            quantized_out = quantized_out + q
+            level_outputs.append(q)
+
+        if self.training and self.quantizer_dropout > 0:
+            batch = x.shape[0]
+            selected = torch.rand(batch, 1) < self.quantizer_dropout
+            n_kept = torch.randint(1, self.codebook_layers + 1, (batch, 1))
+            n_kept = torch.where(selected, n_kept, torch.full_like(n_kept, self.codebook_layers)).to(x.device)
+            quantized_out = sum(q * (n_kept > i) for i, q in enumerate(level_outputs))
+        else:
+            quantized_out = sum(level_outputs)
 
         ids = torch.stack(indices_stack, dim=1)
         loss = torch.tensor(0.0, device=x.device)
