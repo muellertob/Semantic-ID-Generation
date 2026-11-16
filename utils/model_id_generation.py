@@ -21,7 +21,7 @@ def generate_model_id(config: Dict) -> str:
         d = config.data
 
         quantizer_type = m.get('quantizer_type')
-        prefix = quantizer_type if quantizer_type in ['fsq', 'rfsq', 'rqvae'] else 'quantizer'
+        prefix = quantizer_type if quantizer_type in ['fsq', 'rfsq', 'rfsq_fixed', 'rqvae'] else 'quantizer'
 
         dimension = d.get('embedding_dimension', '')
         dim_str = f"-{dimension}" if dimension else ""
@@ -32,16 +32,18 @@ def generate_model_id(config: Dict) -> str:
         codebook_layers = m.get('codebook_layers', '')
  
         # FSQ/ResidualFSQ specific model ID
-        if quantizer_type in ['fsq', 'rfsq']:
+        if quantizer_type in ['fsq', 'rfsq', 'rfsq_fixed']:
             level_list = m.get('level_list', [])
             levels_str = '_'.join(map(str, level_list))
             proj_type = m.get('projection_type', 'none')
             inner_dim = m.get('inner_dim', '')
+            # the fixed-scale quantizer has no projection to name
+            proj_str = "" if quantizer_type == 'rfsq_fixed' else f"proj_{proj_type}_{inner_dim}-"
             
             model_id = (
                 f"{prefix}-{dataset}{dim_str}-bs{batch_size}-norm_{input_normalization}-"
                 f"hd{'_'.join(map(str, hidden_dimension))}-ld{latent_dimension}-"
-                f"l{codebook_layers}-levels{levels_str}-proj_{proj_type}_{inner_dim}-"
+                f"l{codebook_layers}-levels{levels_str}-{proj_str}"
                 f"lr{t.get('learning_rate', '')}-wd{t.get('weight_decay', '')}-ep{t.get('num_epochs', '')}"
             )
         # RQ-VAE specific model ID

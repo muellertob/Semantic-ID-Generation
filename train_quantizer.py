@@ -21,7 +21,7 @@ from modules.rqvae.scheduler import create_temperature_scheduler
 from utils.wandb import wandb_init, get_run_name, log_model_artifact
 from data.factory import load_data
 from modules.rqvae.model import RQ_VAE
-from modules.fsq.model import FSQ_AutoEncoder, ResidualFSQ_AutoEncoder
+from modules.fsq.model import FSQ_AutoEncoder, ResidualFSQ_AutoEncoder, FixedScaleResidualFSQ_AutoEncoder
 from utils.model_id_generation import generate_model_id
 from utils.seed import set_seed, seed_worker, get_seeded_generator
 
@@ -37,7 +37,7 @@ def create_model(config, input_dim):
     Create a quantizer model based on the provided configuration.
 
     Returns:
-        Configured quantizer model (RQ-VAE, FSQ, or ResidualFSQ).
+        Configured quantizer model (RQ-VAE, FSQ, ResidualFSQ, or fixed-scale ResidualFSQ).
     """
     quantizer_type = config.model.quantizer_type
     latent_dim = config.model.latent_dimension
@@ -105,6 +105,19 @@ def create_model(config, input_dim):
         )
         logger.info(f"Created ResidualFSQ AutoEncoder with layers={codebook_layers}, level_list={level_list}, projection={projection_type}")
    
+    elif quantizer_type == "rfsq_fixed":
+        level_list = config.model.level_list
+        model = FixedScaleResidualFSQ_AutoEncoder(
+            input_dim=input_dim,
+            codebook_layers=codebook_layers,
+            hidden_dims=hidden_dims,
+            latent_dim=latent_dim,
+            level_list=level_list,
+            loss_type=loss_type,
+            normalize=normalize
+        )
+        logger.info(f"Created fixed-scale ResidualFSQ AutoEncoder with layers={codebook_layers}, level_list={level_list}")
+
     elif quantizer_type == "fsq":
         level_list = config.model.level_list
         projection_type = getattr(config.model, 'projection_type', None)

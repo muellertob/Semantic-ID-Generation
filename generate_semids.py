@@ -68,6 +68,20 @@ def load_trained_model(model_path, config, device, input_dim):
         model.load_state_dict(state_dict, strict=False)
         model.to(device)
         model.eval()
+    elif quantizer_type == 'rfsq_fixed':
+        from modules.fsq.model import FixedScaleResidualFSQ_AutoEncoder
+        model = FixedScaleResidualFSQ_AutoEncoder(
+            input_dim=input_dim,
+            codebook_layers=config.model.codebook_layers,
+            hidden_dims=config.model.hidden_dimensions,
+            latent_dim=config.model.latent_dimension,
+            level_list=config.model.level_list,
+            loss_type=getattr(config.model, 'loss_type', 'mse'),
+            normalize=normalize
+        )
+        model.load_state_dict(state_dict, strict=False)
+        model.to(device)
+        model.eval()
     elif quantizer_type == 'fsq':
         from modules.fsq.model import FSQ_AutoEncoder
         projection_type = getattr(config.model, 'projection_type', None)
@@ -200,16 +214,8 @@ def run_generation(config_path, model_path, output_path, batch_size=64, run_eval
         sid_report_text = eval_stats.get("report_text", "")
 
     # RESOLVE COLLISIONS
-    # pass codebook_clusters as the limit for the collision token
-    quantizer_type = getattr(config.model, 'quantizer_type', 'rqvae')
-    if quantizer_type in ['fsq', 'rfsq']:
-        codebook_size = 1
-        for lvl in config.model.level_list:
-            codebook_size *= lvl
-    else:
-        codebook_size = config.model.codebook_size
-
-    final_semids = resolve_collisions(semids, max_collisions=codebook_size)
+    # the collision token is limited to the vocabulary size of one level, as stated by the quantizer
+    final_semids = resolve_collisions(semids, max_collisions=model.quantizer.codebook_size)
     
     # save results
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
