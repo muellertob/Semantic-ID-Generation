@@ -206,3 +206,72 @@ class ResidualFSQ(nn.Module):
             )
         
         return QuantizeOutput(embeddings=quantized_out, ids=sem_ids, loss=loss, metrics=metrics)
+
+
+class FixedScaleResidualFSQ(nn.Module):
+    """
+    Parameter-free residual FSQ in the latent: one latent dimension per FSQ channel, no projections.
+
+    Level i rounds the residual on the symmetric grid {2k / (L_j - 1) - 1} scaled by `L_j ** -i`, so the
+    levels tile exactly: their sum is the soft-clamped input rounded to `L_j ** codebook_layers` values.
+
+    - Residual scheme: SoundStream, Algorithm 1 (https://arxiv.org/abs/2107.03312).
+    - Grid and rounding: Parker et al., Eq. 1 (https://arxiv.org/abs/2411.19842).
+    - Scales and clamps: `ResidualFSQ` of lucidrains' vector-quantize-pytorch (commit 3867f60), which
+      cites no paper for them.
+
+    Unlike that implementation, the residual is not detached: the gradient of the output with respect to
+    the soft-clamped input is 1 where any level is inside its hard clamp, else 0. With a detached
+    residual each such level would add 1.
+    """
+    def __init__(self, level_list: List[int], codebook_layers: int = 3):
+        super().__init__()
+        self.level_list = level_list
+        self.codebook_layers = codebook_layers
+        self.codebook_size = 1
+        for level in level_list:
+            self.codebook_size *= level
+
+        levels = torch.tensor(level_list, dtype=torch.float32)
+        self.register_buffer("levels", levels, persistent=False)
+        basis = torch.cumprod(torch.tensor([1] + level_list[:-1]), dim=0, dtype=torch.int32)
+        self.register_buffer("basis", basis, persistent=False)
+        scales = torch.stack([levels ** -i for i in range(codebook_layers)])
+        self.register_buffer("scales", scales, persistent=False)
+        # outer edge of the outermost grid cell
+        self.register_buffer("clamp_value", 1 + 1 / (levels - 1), persistent=False)
+
+    def forward(self, x: torch.Tensor, **kwargs) -> QuantizeOutput:
+        bounded = (x / self.clamp_value).tanh() * self.clamp_value
+        residual = bounded
+        quantized_out = 0
+        first_residual = None
+        indices_stack = []
+
+        for i, scale in enumerate(self.scales):
+            u = (residual / scale).clamp(-1, 1)
+            t = (self.levels - 1) * (u + 1) / 2
+            # floor(t + 0.5) as in Parker et al., Eq. 1: ties go up (torch.round sends ties to the even integer)
+            digit = t + (torch.floor(t + 0.5) - t).detach()
+            q = (digit * 2 / (self.levels - 1) - 1) * scale
+            indices_stack.append((digit.detach().round().to(torch.int32) * self.basis).sum(dim=-1))
+            residual = residual - q
+            if i == 0:
+                first_residual = residual
+            quantized_out = quantized_out + q
+
+        ids = torch.stack(indices_stack, dim=1)
+        loss = torch.tensor(0.0, device=x.device)
+
+        with torch.no_grad():
+            # input_tensor is the soft-clamped input (the input of level 1), so relative residual
+            # norms are measured in the space the levels work in
+            metrics = calculate_quantizer_metrics(
+                ids=ids,
+                codebook_size=self.codebook_size,
+                input_tensor=bounded,
+                first_residual=first_residual,
+                final_residual=residual
+            )
+
+        return QuantizeOutput(embeddings=quantized_out, ids=ids, loss=loss, metrics=metrics)
