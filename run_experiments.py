@@ -545,6 +545,74 @@ GTS_EXPERIMENTS = [
         "recommender_config": "config/recommender/amazon_toy_grid_fsq_gts.yaml",
         "codebook_size": 288,
     },
+    # Residual FSQ with fixed per-level scales: Three grids (866, 4444, 2x8) 
+    # times quantizer dropout 0 / 0.5 / 1, each with the Stage-2 config of its vocabulary size.
+    {
+        "name": "RFSQ_Fixed_866",
+        "quant_config": "config/fsq/amazon_toy_rfsq_fixed_gts.yaml",
+        "recommender_config": "config/recommender/amazon_toy_grid_fsq_gts.yaml",
+        "codebook_size": 288,
+    },
+    {
+        "name": "RFSQ_Fixed_866_qd05",
+        "quant_config": "config/fsq/amazon_toy_rfsq_fixed_gts.yaml",
+        "quant_overrides": {"model.quantizer_dropout": 0.5},
+        "recommender_config": "config/recommender/amazon_toy_grid_fsq_gts.yaml",
+        "codebook_size": 288,
+    },
+    {
+        "name": "RFSQ_Fixed_866_qd1",
+        "quant_config": "config/fsq/amazon_toy_rfsq_fixed_gts.yaml",
+        "quant_overrides": {"model.quantizer_dropout": 1.0},
+        "recommender_config": "config/recommender/amazon_toy_grid_fsq_gts.yaml",
+        "codebook_size": 288,
+    },
+    {
+        "name": "RFSQ_Fixed_4444",
+        "quant_config": "config/fsq/amazon_toy_rfsq_fixed_gts.yaml",
+        "quant_overrides": {"model.level_list": [4, 4, 4, 4], "model.latent_dimension": 4},
+        "recommender_config": "config/recommender/amazon_toy_grid_gts.yaml",
+        "codebook_size": 256,
+    },
+    {
+        "name": "RFSQ_Fixed_4444_qd05",
+        "quant_config": "config/fsq/amazon_toy_rfsq_fixed_gts.yaml",
+        "quant_overrides": {"model.level_list": [4, 4, 4, 4], "model.latent_dimension": 4,
+                            "model.quantizer_dropout": 0.5},
+        "recommender_config": "config/recommender/amazon_toy_grid_gts.yaml",
+        "codebook_size": 256,
+    },
+    {
+        "name": "RFSQ_Fixed_4444_qd1",
+        "quant_config": "config/fsq/amazon_toy_rfsq_fixed_gts.yaml",
+        "quant_overrides": {"model.level_list": [4, 4, 4, 4], "model.latent_dimension": 4,
+                            "model.quantizer_dropout": 1.0},
+        "recommender_config": "config/recommender/amazon_toy_grid_gts.yaml",
+        "codebook_size": 256,
+    },
+    {
+        "name": "RFSQ_Fixed_2x8",
+        "quant_config": "config/fsq/amazon_toy_rfsq_fixed_gts.yaml",
+        "quant_overrides": {"model.level_list": [2, 2, 2, 2, 2, 2, 2, 2], "model.latent_dimension": 8},
+        "recommender_config": "config/recommender/amazon_toy_grid_gts.yaml",
+        "codebook_size": 256,
+    },
+    {
+        "name": "RFSQ_Fixed_2x8_qd05",
+        "quant_config": "config/fsq/amazon_toy_rfsq_fixed_gts.yaml",
+        "quant_overrides": {"model.level_list": [2, 2, 2, 2, 2, 2, 2, 2], "model.latent_dimension": 8,
+                            "model.quantizer_dropout": 0.5},
+        "recommender_config": "config/recommender/amazon_toy_grid_gts.yaml",
+        "codebook_size": 256,
+    },
+    {
+        "name": "RFSQ_Fixed_2x8_qd1",
+        "quant_config": "config/fsq/amazon_toy_rfsq_fixed_gts.yaml",
+        "quant_overrides": {"model.level_list": [2, 2, 2, 2, 2, 2, 2, 2], "model.latent_dimension": 8,
+                            "model.quantizer_dropout": 1.0},
+        "recommender_config": "config/recommender/amazon_toy_grid_gts.yaml",
+        "codebook_size": 256,
+    },
 ]
 
 

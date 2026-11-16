@@ -87,9 +87,10 @@ def test_rqvae_generate_config_keeps_the_base_input_settings(written_config):
     assert (config["data.input_normalization"], config["model.normalize_inputs"]) == ("none", True)
 
 
-@pytest.mark.parametrize("variant", ["RQ_VAE_cal", "FSQ_20k"])
+@pytest.mark.parametrize("variant", ["RQ_VAE_cal", "FSQ_20k", "RFSQ_Fixed_866_qd05"])
 def test_recommender_train_config_names_the_run_after_the_variant(written_config, variant):
-    # each variant shares the sid_type with its base (RQ_VAE, FSQ), so only the variant name keeps their checkpoints apart
+    # each variant shares the sid_type with its base (RQ_VAE, FSQ, R-FSQ_Fixed), so only the variant name keeps
+    # their checkpoints apart
     assert written_config(variant, "recommender")["general.run_name"] == f"{variant}_seed_42"
 
 
@@ -135,3 +136,58 @@ def test_lr001_variants_differ_from_their_base_only_in_the_learning_rate_and_pat
     assert {key for key in old if old[key] != new[key]} == {
         "train.learning_rate", "general.model_path", "general.meta_json"}
     assert (old["train.learning_rate"], new["train.learning_rate"]) == (0.001, 0.01)
+
+
+@pytest.mark.parametrize("grid, level_list", [("866", [8, 6, 6]), ("4444", [4, 4, 4, 4]), ("2x8", [2] * 8)])
+@pytest.mark.parametrize("suffix", ["", "_qd05", "_qd1"])
+def test_rfsq_fixed_variants_write_the_grid_of_their_name_with_one_latent_dimension_per_channel(
+        written_config, grid, level_list, suffix):
+    # the quantizer has no projection, so the latent dimension is the number of channels: 3, 4 and 8
+    config = written_config(f"RFSQ_Fixed_{grid}{suffix}")
+    assert (config["model.level_list"], config["model.latent_dimension"]) == (level_list, len(level_list))
+
+
+@pytest.mark.parametrize("suffix, quantizer_dropout", [("", 0.0), ("_qd05", 0.5), ("_qd1", 1.0)])
+@pytest.mark.parametrize("grid", ["866", "4444", "2x8"])
+def test_rfsq_fixed_variants_write_the_dropout_probability_of_their_suffix(
+        written_config, grid, suffix, quantizer_dropout):
+    # no suffix trains without quantizer dropout; qd05 and qd1 stand for the probabilities 0.5 and 1
+    assert written_config(f"RFSQ_Fixed_{grid}{suffix}")["model.quantizer_dropout"] == quantizer_dropout
+
+
+@pytest.mark.parametrize("variant, base", [
+    ("RFSQ_Fixed_866_qd05", "RFSQ_Fixed_866"), ("RFSQ_Fixed_866_qd1", "RFSQ_Fixed_866"),
+    ("RFSQ_Fixed_4444_qd05", "RFSQ_Fixed_4444"), ("RFSQ_Fixed_4444_qd1", "RFSQ_Fixed_4444"),
+    ("RFSQ_Fixed_2x8_qd05", "RFSQ_Fixed_2x8"), ("RFSQ_Fixed_2x8_qd1", "RFSQ_Fixed_2x8")])
+def test_rfsq_fixed_dropout_variants_differ_from_their_grid_only_in_the_dropout_and_paths(
+        written_config, variant, base):
+    # a paired comparison: nothing else may change
+    old, new = written_config(base), written_config(variant)
+    assert set(old) == set(new)
+    assert {key for key in old if old[key] != new[key]} == {
+        "model.quantizer_dropout", "general.model_path", "general.meta_json"}
+
+
+@pytest.mark.parametrize("variant", ["RFSQ_Fixed_4444", "RFSQ_Fixed_2x8"])
+def test_rfsq_fixed_grids_differ_from_866_only_in_the_grid_latent_dimension_and_paths(written_config, variant):
+    # the grids are compared at equal quantizer settings
+    old, new = written_config("RFSQ_Fixed_866"), written_config(variant)
+    assert set(old) == set(new)
+    assert {key for key in old if old[key] != new[key]} == {
+        "model.level_list", "model.latent_dimension", "general.model_path", "general.meta_json"}
+
+
+@pytest.mark.parametrize("variant, codebook_size", [("RFSQ_Fixed_866", 288), ("RFSQ_Fixed_4444", 256),
+                                                    ("RFSQ_Fixed_2x8", 256)])
+def test_rfsq_fixed_recommender_config_has_as_many_values_per_level_as_the_grid(
+        written_config, variant, codebook_size):
+    # 8 * 6 * 6 = 288 and 4^4 = 2^8 = 256; Semantic IDs outside the Stage-2 vocabulary are rejected at the start of
+    # training, and a vocabulary that is too large would leave tokens unused
+    assert written_config(variant, "recommender")["seq2seq.codebook_size"] == codebook_size
+
+
+def test_rfsq_fixed_generate_config_has_the_data_and_model_sections_of_the_quantizer_config(written_config):
+    # the Semantic IDs must be generated with the grid the quantizer was trained with
+    train, generate = written_config("RFSQ_Fixed_4444_qd05"), written_config("RFSQ_Fixed_4444_qd05", "generate")
+    section = lambda config, name: {k: v for k, v in config.items() if k.startswith(name + ".")}
+    assert (section(generate, "data"), section(generate, "model")) == (section(train, "data"), section(train, "model"))
