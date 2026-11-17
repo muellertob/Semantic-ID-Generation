@@ -55,9 +55,10 @@ def read_onion_interactions(events_path, start, end, k):
         k: Users need at least k distinct tracks and tracks at least k distinct users,
             counted inside the window (see _k_core).
 
-    Every event of a surviving (user, track) pair is kept, repeated listens and identical
-    rows included. Timestamps are read as UTC. A user's events are ordered by time; events
-    of the same second by track id.
+    Timestamps are read as UTC. A user's events are ordered by time; events of the same
+    second by track id. Consecutive repeats are then removed: a run of the same track keeps
+    only its first play (Gusak et al. 2025, "Time to Split", eliminate consecutive repeated
+    items). A later listen to a track after another track stays.
 
     Returns:
         (sequences, track_ids). track_ids are the surviving track ids in ascending order;
@@ -94,5 +95,7 @@ def read_onion_interactions(events_path, start, end, k):
     for user in sorted(by_user):
         # item ids follow the track id order, so the tuple order is time, then track id
         rows = sorted(by_user[user])
+        # remove consecutive repeats of the same track, keeping only the first play (after k core filtering)
+        rows = [row for i, row in enumerate(rows) if i == 0 or row[1] != rows[i - 1][1]]
         sequences.append((user, [item for _, item in rows], [t for t, _ in rows]))
     return sequences, track_ids

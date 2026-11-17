@@ -108,16 +108,25 @@ def test_equal_timestamps_of_one_user_are_ordered_by_track_id(tmp_path):
     assert read(tmp_path, rows) == ([(1, [0, 1], [T5, T5]), USER_2], ["A", "C"])
 
 
-def test_relistens_of_a_surviving_pair_stay(tmp_path):
-    # next-item prediction keeps every event of a surviving pair
+def test_relisten_after_another_track_stays(tmp_path):
+    # only consecutive repeats go; one event per (user, track) pair would drop this listen
     assert read(tmp_path, BLOCK + [(1, "A", AUG_9)]) == (
         [(1, [0, 1, 0], [T5, T6, T9]), USER_2], ["A", "C"])
 
 
-def test_identical_rows_are_two_events(tmp_path):
-    # no deduplication: the raw file has such rows and the event count includes them
-    assert read(tmp_path, BLOCK + [(1, "A", "2019-08-05 10:00:00")]) == (
-        [(1, [0, 0, 1], [T5, T5, T6]), USER_2], ["A", "C"])
+def test_run_of_the_same_track_keeps_only_its_first_play(tmp_path):
+    # user 1 hears A, C, C, C: a repeat would be a target that copies the last input; C keeps time T6
+    assert read(tmp_path, BLOCK + [(1, "C", AUG_9), (1, "C", AUG_10)]) == EXPECTED
+
+
+def test_runs_are_formed_after_the_core(tmp_path):
+    # user 1 hears A, C, B, C; B has one distinct user and goes, which makes the two C plays neighbours
+    assert read(tmp_path, BLOCK + [(1, "B", AUG_9), (1, "C", AUG_10)]) == EXPECTED
+
+
+def test_identical_rows_are_one_event(tmp_path):
+    # identical rows are neighbours after the ordering, so they form a run
+    assert read(tmp_path, BLOCK + [(1, "A", "2019-08-05 10:00:00")]) == EXPECTED
 
 
 def test_user_threshold_counts_distinct_tracks_not_events(tmp_path):
