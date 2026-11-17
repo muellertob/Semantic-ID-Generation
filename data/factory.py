@@ -1,4 +1,5 @@
-from data.loader import load_movie_lens, load_amazon
+from data.loader import (load_amazon, load_amazon_sequences, load_movie_lens, load_onion,
+                         load_onion_sequences)
 from data.protocols import get_split_config
 import logging
 
@@ -39,6 +40,12 @@ def load_data(config, split='train'):
             input_normalization=config.data.input_normalization,
             split=split,
         )
+    elif config.data.dataset == "music4all_onion":
+        data = load_onion(
+            split_config=get_split_config(config),
+            input_normalization=config.data.input_normalization,
+            split=split,
+        )
     elif config.data.dataset == "lastfm":
         raise NotImplementedError("LastFM dataset loading is not implemented yet.")
     else:
@@ -46,3 +53,21 @@ def load_data(config, split='train'):
 
     logger.info(f"Loaded {config.data.dataset} dataset with shape: {data.shape}")
     return data
+
+
+def load_sequences(config):
+    """
+    The Stage-2 user history rows of the configured dataset under the run's split protocol.
+
+    Returns:
+        (sequences, num_users, num_items), see load_amazon_sequences.
+
+    Raises:
+        ValueError: For datasets without sequence data.
+    """
+    split_config = get_split_config(config)
+    if config.data.dataset == "amazon":
+        return load_amazon_sequences(config.data.category, split_config)
+    if config.data.dataset == "music4all_onion":
+        return load_onion_sequences(split_config)
+    raise ValueError(f"No sequence data for dataset: {config.data.dataset}")

@@ -9,8 +9,8 @@ from omegaconf import OmegaConf
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from data.loader import load_amazon_sequences
-from data.protocols import check_sasrec_protocol, get_split_config
+from data.factory import load_sequences
+from data.protocols import check_sasrec_protocol
 from data.sequence import SASRecDataset, sasrec_collate_fn
 from modules.sasrec.model import SASRec, sample_negatives
 from utils.wandb import get_run_name, wandb_login
@@ -129,7 +129,7 @@ def run_training(config_path, resume_path=None, overrides=None):
     logger.info(f"SASRec run name: {model_id}")
 
     # data
-    sequences, num_users, num_items = load_amazon_sequences(config.data.category, get_split_config(config))
+    sequences, num_users, num_items = load_sequences(config)
     logger.info(f"Loaded {num_users} users, {num_items} items")
 
     train_ds = SASRecDataset(sequences, num_items=num_items, max_len=max_seq_len, mode='train')

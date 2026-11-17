@@ -69,7 +69,7 @@ def test_sasrec_training_calls_set_seed(tmp_path):
     OmegaConf.save(OmegaConf.create(config), config_path)
     
     with patch("train_sasrec.set_seed") as mock_set_seed, \
-         patch("train_sasrec.load_amazon_sequences", side_effect=ValueError("StopAfterSeeding")):
+         patch("train_sasrec.load_sequences", side_effect=ValueError("StopAfterSeeding")):
          
         with pytest.raises(ValueError, match="StopAfterSeeding"):
             train_sasrec.run_training(config_path)

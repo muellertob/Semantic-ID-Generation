@@ -14,7 +14,7 @@ from unittest.mock import patch
 import pytest
 import torch
 
-from data.protocols import SplitConfig
+from data.protocols import SplitConfig, get_split_config
 
 
 def _eval_split(user_ids, histories, targets, is_last=None):
@@ -73,9 +73,9 @@ class TestTestSeq2SeqMeta:
     def test_gts_meta_keys(self, tmp_path, seq2seq_config):
         from test_seq2seq import run_testing
         config_path, semids_file, ckpt, sequences, meta_path = self._setup(tmp_path, seq2seq_config, "gts")
-        with patch("test_seq2seq.load_amazon_sequences", return_value=(sequences, 3, 20)) as mock_load:
+        with patch("test_seq2seq.load_sequences", return_value=(sequences, 3, 20)) as mock_load:
             run_testing(config_path, semids_file, ckpt)
-        assert mock_load.call_args.args[1] == SplitConfig("gts", 0.9, 0.9)
+        assert get_split_config(mock_load.call_args.args[0]) == SplitConfig("gts", 0.9, 0.9)
         meta = json.load(open(meta_path))
         assert set(meta) == self.GTS_SPLIT_KEYS | {"cold"}
         assert set(meta["cold"]) == self.GTS_SPLIT_KEYS
@@ -91,7 +91,7 @@ class TestTestSeq2SeqMeta:
         from test_seq2seq import run_testing
         config_path, semids_file, ckpt, sequences, meta_path = self._setup(tmp_path, seq2seq_config, "gts")
         sequences["test_cold"] = _eval_split([], [], [], is_last=[])
-        with patch("test_seq2seq.load_amazon_sequences", return_value=(sequences, 3, 20)):
+        with patch("test_seq2seq.load_sequences", return_value=(sequences, 3, 20)):
             run_testing(config_path, semids_file, ckpt)
         meta = json.load(open(meta_path))
         assert meta["cold"] == {"counts": {"num_users": 0, "num_rows": 0}}
@@ -99,7 +99,7 @@ class TestTestSeq2SeqMeta:
     def test_loo_meta_keys(self, tmp_path, seq2seq_config):
         from test_seq2seq import run_testing
         config_path, semids_file, ckpt, sequences, meta_path = self._setup(tmp_path, seq2seq_config, "loo")
-        with patch("test_seq2seq.load_amazon_sequences", return_value=(sequences, 3, 20)):
+        with patch("test_seq2seq.load_sequences", return_value=(sequences, 3, 20)):
             run_testing(config_path, semids_file, ckpt)
         meta = json.load(open(meta_path))
         assert set(meta) == self.LOO_KEYS

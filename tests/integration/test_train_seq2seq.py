@@ -38,7 +38,7 @@ def _run_and_save_checkpoint(tmp_path, config_path, semids_path):
     """
     Run phase-1 training and write the checkpoint to tmp_path/best.pt.
 
-    Assumes compute_metrics, load_amazon_sequences, and TigerSeq2Seq are
+    Assumes compute_metrics, load_sequences, and TigerSeq2Seq are
     already patched by the calling test's decorators — no re-patching here.
     Only save_checkpoint is patched to redirect the file to our controlled path.
     """
@@ -67,7 +67,7 @@ class TestCheckpointSaved:
 
     @patch("train_seq2seq.compute_metrics",
            return_value=FAKE_REPORT)
-    @patch("train_seq2seq.load_amazon_sequences")
+    @patch("train_seq2seq.load_sequences")
     @patch("train_seq2seq.TigerSeq2Seq")
     def test_checkpoint_created_on_recall_improvement(
             self, mock_model_class, mock_load_data, _,
@@ -108,7 +108,7 @@ class TestCheckpointSaved:
 
     @patch("train_seq2seq.compute_metrics",
            return_value=FAKE_REPORT)
-    @patch("train_seq2seq.load_amazon_sequences")
+    @patch("train_seq2seq.load_sequences")
     @patch("train_seq2seq.TigerSeq2Seq")
     def test_no_checkpoint_when_save_model_false(
             self, mock_model_class, mock_load_data, _,
@@ -133,7 +133,7 @@ class TestResumeTraining:
 
     @patch("train_seq2seq.compute_metrics",
            return_value=FAKE_REPORT)
-    @patch("train_seq2seq.load_amazon_sequences")
+    @patch("train_seq2seq.load_sequences")
     @patch("train_seq2seq.TigerSeq2Seq")
     def test_resume_loads_optimizer_state(
             self, mock_model_class, mock_load_data, _,
@@ -163,7 +163,7 @@ class TestResumeTraining:
                 f"State dict mismatch at key '{k}'"
             )
 
-    @patch("train_seq2seq.load_amazon_sequences")
+    @patch("train_seq2seq.load_sequences")
     @patch("train_seq2seq.TigerSeq2Seq")
     def test_resume_restores_best_recall(
             self, mock_model_class, mock_load_data,
@@ -196,7 +196,7 @@ class TestWarmupOverride:
 
     @patch("train_seq2seq.compute_metrics",
            return_value=FAKE_REPORT)
-    @patch("train_seq2seq.load_amazon_sequences")
+    @patch("train_seq2seq.load_sequences")
     @patch("train_seq2seq.TigerSeq2Seq")
     def test_warmup_override_produces_decaying_lr(
             self, mock_model_class, mock_load_data, _,
@@ -254,7 +254,7 @@ class TestConfigOverrides:
 
     @patch("train_seq2seq.compute_metrics",
            return_value=FAKE_REPORT)
-    @patch("train_seq2seq.load_amazon_sequences")
+    @patch("train_seq2seq.load_sequences")
     @patch("train_seq2seq.TigerSeq2Seq")
     def test_overrides_respected(
             self, mock_model_class, mock_load_data, _,
@@ -284,7 +284,7 @@ class TestConfigOverrides:
 
 class TestEvalDelayEpochs:
 
-    @patch("train_seq2seq.load_amazon_sequences")
+    @patch("train_seq2seq.load_sequences")
     @patch("train_seq2seq.TigerSeq2Seq")
     def test_eval_delay_epochs_skips_metrics(
             self, mock_model_class, mock_load_data,
@@ -302,7 +302,7 @@ class TestEvalDelayEpochs:
             assert not mock_compute.called, "compute_metrics should not be called when delay is equal to or greater than num_epochs"
 
     @patch("train_seq2seq.compute_metrics", return_value=FAKE_REPORT)
-    @patch("train_seq2seq.load_amazon_sequences")
+    @patch("train_seq2seq.load_sequences")
     @patch("train_seq2seq.TigerSeq2Seq")
     def test_eval_delay_epochs_allows_metrics_after_delay(
             self, mock_model_class, mock_load_data, mock_compute,
@@ -373,7 +373,7 @@ class TestCheckpointMetric:
             get_checkpoint_metric(OmegaConf.create({"seq2seq": {"checkpoint_metric": bad}}))
 
     @patch("train_seq2seq.compute_metrics")
-    @patch("train_seq2seq.load_amazon_sequences")
+    @patch("train_seq2seq.load_sequences")
     @patch("train_seq2seq.TigerSeq2Seq")
     def test_unvalidated_k_fails_before_training(
             self, mock_model_class, mock_load_data, mock_compute,
@@ -390,7 +390,7 @@ class TestCheckpointMetric:
         assert not mock_compute.called
 
     @patch("train_seq2seq.compute_metrics", return_value=FAKE_REPORT)
-    @patch("train_seq2seq.load_amazon_sequences")
+    @patch("train_seq2seq.load_sequences")
     @patch("train_seq2seq.TigerSeq2Seq")
     def test_ndcg_metric_selects_checkpoint_value(
             self, mock_model_class, mock_load_data, _,
@@ -410,7 +410,7 @@ class TestCheckpointMetric:
         assert metric_name_saved == "ndcg@10"
         assert value_saved == FAKE_NDCG[10]
 
-    @patch("train_seq2seq.load_amazon_sequences")
+    @patch("train_seq2seq.load_sequences")
     @patch("train_seq2seq.TigerSeq2Seq")
     def test_early_stopping_counts_chosen_metric(
             self, mock_model_class, mock_load_data,
@@ -438,7 +438,7 @@ class TestCheckpointMetric:
         assert mock_compute.call_count == 4
 
     @patch("train_seq2seq.compute_metrics", return_value=FAKE_REPORT)
-    @patch("train_seq2seq.load_amazon_sequences")
+    @patch("train_seq2seq.load_sequences")
     @patch("train_seq2seq.TigerSeq2Seq")
     def test_resume_restores_best_recall(
             self, mock_model_class, mock_load_data, _,
@@ -465,7 +465,7 @@ class TestCheckpointMetric:
             assert mock_save.called
 
     @patch("train_seq2seq.compute_metrics", return_value=FAKE_REPORT)
-    @patch("train_seq2seq.load_amazon_sequences")
+    @patch("train_seq2seq.load_sequences")
     @patch("train_seq2seq.TigerSeq2Seq")
     def test_resume_restores_best_value_from_ndcg_key(
             self, mock_model_class, mock_load_data, _,
@@ -507,7 +507,7 @@ class TestCheckpointName:
             torch.save(semids, semids_path)
 
             with patch("train_seq2seq.compute_metrics", return_value=FAKE_REPORT), \
-                    patch("train_seq2seq.load_amazon_sequences", return_value=(mock_amazon_sequences, 10, 20)), \
+                    patch("train_seq2seq.load_sequences", return_value=(mock_amazon_sequences, 10, 20)), \
                     patch("train_seq2seq.TigerSeq2Seq", return_value=mock_seq2seq_model), \
                     patch("train_seq2seq.save_checkpoint") as mock_save:
                 run_training(config_path, semids_path)

@@ -8,7 +8,7 @@ from collections import Counter
 from functools import partial
 from tqdm import tqdm
 
-from data.loader import load_amazon_sequences
+from data.factory import load_sequences
 from data.protocols import get_split_config
 from data.semids_checks import check_semids
 from data.sequence import SemanticIDSequenceDataset, collate_fn, get_max_history_len
@@ -107,7 +107,7 @@ def run_baselines(config_path, semantic_ids_path, k_list=[5, 10, 20]):
     split_config = get_split_config(config)
     protocol = split_config.protocol
     logger.info(f"Loading User History Data (Test Split, protocol={protocol})...")
-    sequences, num_users, loaded_num_items = load_amazon_sequences(config.data.category, split_config)
+    sequences, num_users, loaded_num_items = load_sequences(config)
     check_semids(semids_data, config, loaded_num_items)
     
     # compute most popular items from train split

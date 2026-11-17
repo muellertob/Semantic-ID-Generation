@@ -8,7 +8,7 @@ import json
 from functools import partial
 
 from modules.recommender import TigerSeq2Seq
-from data.loader import load_amazon_sequences
+from data.factory import load_sequences
 from data.protocols import get_split_config
 from data.semids_checks import check_semids
 from data.sequence import SemanticIDSequenceDataset, collate_fn, get_max_history_len
@@ -101,7 +101,7 @@ def run_testing(config_path, semantic_ids_path, model_path, overrides=None):
     split_config = get_split_config(config)
     protocol = split_config.protocol
     logger.info(f"Loading User History Data (Test Split, protocol={protocol})...")
-    sequences, num_users, num_items = load_amazon_sequences(config.data.category, split_config)
+    sequences, num_users, num_items = load_sequences(config)
     logger.info(f"Loaded history for {num_users} users and {num_items} items")
     check_semids(semids_data, config, num_items)
     
