@@ -616,6 +616,49 @@ GTS_EXPERIMENTS = [
 ]
 
 
+def onion_variant(name, quant_config, recommender_config):
+    """The Toys GTS variant of this name (its overrides and codebook size) on the Music4All-Onion configs."""
+    toys = next(exp for exp in GTS_EXPERIMENTS if exp["name"] == name)
+    return {**toys, "quant_config": quant_config, "recommender_config": recommender_config}
+
+
+# Music4All-Onion under the global temporal split (--dataset music4all_onion): the Toys reference variants
+# with the same Stage-1 defaults, on Onion configs that differ from the Toys ones only in the data, the W&B
+# projects and the Stage-2 epochs (the same 100k steps)
+ONION_GTS_EXPERIMENTS = [
+    onion_variant("RQ_VAE_cal_b025_lr001_20k", "config/rq-vae/onion_tiger_gts.yaml",
+                  "config/recommender/onion_grid_gts.yaml"),
+    onion_variant("FSQ_20k", "config/fsq/onion_gts.yaml", "config/recommender/onion_grid_fsq_gts.yaml"),
+    onion_variant("RQ_KMeans", "config/rq-kmeans/onion_rqkmeans_gts.yaml", "config/recommender/onion_grid_gts.yaml"),
+]
+
+DATASETS = ("toys", "music4all_onion")
+
+
+def select_experiments(dataset, protocol, variants):
+    """
+    The experiments of a dataset and protocol, restricted to the comma-separated variant names
+    (matched case-insensitively, in the given order) if variants is not None.
+
+    Raises a ValueError for a dataset without experiments under the protocol and for unknown names.
+    """
+    if dataset == "music4all_onion":
+        if protocol != "gts":
+            raise ValueError(f"--dataset music4all_onion has experiments only under --protocol gts, got {protocol!r}")
+        experiments = ONION_GTS_EXPERIMENTS
+    else:
+        experiments = GTS_EXPERIMENTS if protocol == "gts" else LOO_EXPERIMENTS
+    if variants is None:
+        return experiments
+    wanted = [v.strip() for v in variants.split(",") if v.strip() != ""]
+    by_lower = {exp["name"].lower(): exp for exp in experiments}
+    unknown = [v for v in wanted if v.lower() not in by_lower]
+    if unknown:
+        raise ValueError(f"--variants: unknown {unknown}; available for --dataset {dataset} --protocol {protocol}: "
+                         f"{[exp['name'] for exp in experiments]}")
+    return [by_lower[name] for name in dict.fromkeys(v.lower() for v in wanted)]
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="Run Semantic ID experiments in an overlapping parallel pipeline")
@@ -628,6 +671,7 @@ def main():
     parser.add_argument("--models-dir", type=str, default="models", help="Folder for quantizer and recommender checkpoints (e.g. models_toys_v2)")
     parser.add_argument("--reuse-semids", type=str, default=None, help="Skip Stage 1 and train Stage 2 on the SIDs of an earlier run's outputs folder (e.g. outputs_toys); its semids.pt and quantizer/generate meta JSONs are copied into --outputs-dir")
     parser.add_argument("--protocol", type=str, default="loo", choices=["loo", "gts"], help="Evaluation protocol: loo = leave-one-out (default, the reported Toys experiments), gts = global temporal split (*_gts configs)")
+    parser.add_argument("--dataset", type=str, default="toys", choices=DATASETS, help="Dataset: toys (default, Amazon Toys) or music4all_onion (only with --protocol gts)")
     parser.add_argument("--variants", type=str, default=None, help="Comma-separated experiment names to run (e.g. RQ_KMeans,FSQ); default: all of the protocol's experiments")
     args = parser.parse_args()
     
@@ -646,17 +690,10 @@ def main():
     gpu_quant = args.gpu_quantizer
     parallel = not args.no_parallel and reuse_dir is None
     
-    experiments = GTS_EXPERIMENTS if args.protocol == "gts" else LOO_EXPERIMENTS
-    
-    # restrict to the requested variants (names are matched case-insensitively)
-    if args.variants is not None:
-        wanted = [v.strip() for v in args.variants.split(",") if v.strip() != ""]
-        by_lower = {exp["name"].lower(): exp for exp in experiments}
-        unknown = [v for v in wanted if v.lower() not in by_lower]
-        if unknown:
-            parser.error(f"--variants: unknown {unknown}; available for --protocol {args.protocol}: {[exp['name'] for exp in experiments]}")
-        names = dict.fromkeys(v.lower() for v in wanted)
-        experiments = [by_lower[name] for name in names]
+    try:
+        experiments = select_experiments(args.dataset, args.protocol, args.variants)
+    except ValueError as e:
+        parser.error(str(e))
     
     if reuse_dir is not None:
         missing = [os.path.join(reuse_dir, f"{exp['name'].lower()}_seed_{seed}", "semids.pt") for exp in experiments for seed in seeds]
@@ -666,7 +703,7 @@ def main():
     
     init_report_files()
     
-    log_msg(f"Starting experiments run. Protocol = {args.protocol}, Variants = {[exp['name'] for exp in experiments]}, Seeds = {seeds}, Dry run = {dry_run}, Parallel = {parallel}, Reuse SIDs from = {reuse_dir}")
+    log_msg(f"Starting experiments run. Dataset = {args.dataset}, Protocol = {args.protocol}, Variants = {[exp['name'] for exp in experiments]}, Seeds = {seeds}, Dry run = {dry_run}, Parallel = {parallel}, Reuse SIDs from = {reuse_dir}")
     
     # Flatten experiments and seeds into a sequence of pipeline tasks
     tasks = []

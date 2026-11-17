@@ -1,0 +1,43 @@
+# Music4All-Onion variant of amazon_toy_tiger_gts.yaml (same settings, other data and W&B project); the quantizer
+# fits on the stage-1 items only. The current Stage-1 defaults are set by the experiment entries in run_experiments.py.
+# data loader configuration
+data:
+  dataset: "music4all_onion"
+  batch_size: 1024
+  input_normalization: "none" # none | center | center_l2 | std_l2
+  split: "train"
+  split_protocol: "gts" # global temporal split
+  gts_q_test: 0.9
+  gts_q_val: 0.9
+
+# model configuration (RQ-VAE)
+model:
+  quantizer_type: "rqvae"
+  input_dimension: 768
+  hidden_dimensions: [512, 256, 128]
+  latent_dimension: 32            # GRID used 64; TIGER used 32
+  codebook_layers: 3
+  codebook_size: 256
+  beta: 6.0                       # equals our former 0.25 on losses averaged over dimensions (x 768/32), not TIGER's printed 0.25
+  commit_all_levels: False        # True: every level's commitment term reaches the encoder
+  quantization_method: "ste"
+  distance_method: "l2"
+  normalize_inputs: True          # VAE model-internal input normalization layer (BatchNorm + L2 Norm)
+
+# training configuration (RQ-VAE)
+train:
+  optimizer: "adagrad"
+  learning_rate: 1e-3             # TIGER paper states 0.4, but this is likely a typo (GRID used 1e-3, and 0.4 is very high for Adagrad)
+  weight_decay: 0
+  num_epochs: 2000
+  use_lr_scheduler: False
+
+# additional configuration
+general:
+  seed: 10
+  sid_type: "RQ-VAE"
+  use_wandb: True
+  wandb_log_artifacts: False
+  wandb_project_quantizer: "mt-onion-quantizer"
+  wandb_entity: "tobias-mueller99-johannes-kepler-universit-t-linz"
+  save_model: True

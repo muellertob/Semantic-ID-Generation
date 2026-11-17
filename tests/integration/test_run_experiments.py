@@ -7,7 +7,26 @@ from omegaconf import OmegaConf
 import pytest
 
 import run_experiments
-from run_experiments import GTS_EXPERIMENTS, prepare_generate_task, prepare_quantizer_task, run_recommender_task
+from run_experiments import (GTS_EXPERIMENTS, LOO_EXPERIMENTS, ONION_GTS_EXPERIMENTS, prepare_generate_task,
+                             prepare_quantizer_task, run_recommender_task, select_experiments)
+
+MISSING = "MISSING"
+
+
+def flatten(config):
+    return {f"{section}.{key}": value for section, keys in config.items() for key, value in keys.items()}
+
+
+def flat_diff(toys, onion):
+    """{key: (toys value, onion value)} for every flat key whose value differs or that only one dict has."""
+    return {key: (toys.get(key, MISSING), onion.get(key, MISSING))
+            for key in toys.keys() | onion.keys() if toys.get(key, MISSING) != onion.get(key, MISSING)}
+
+
+def config_diff(toys_path, onion_path):
+    """flat_diff of two yaml files."""
+    return flat_diff(flatten(OmegaConf.to_container(OmegaConf.load(toys_path))),
+                     flatten(OmegaConf.to_container(OmegaConf.load(onion_path))))
 
 
 @pytest.fixture
@@ -20,8 +39,8 @@ def written_config(tmp_path, monkeypatch):
                       ("EXPERIMENT_DIR", "out/experiments"), ("CONFIGS_DIR", "out/experiments/configs")]:
         monkeypatch.setattr(run_experiments, name, str(tmp_path / sub))
 
-    def write(variant, stage="quantizer"):
-        exp = next(e for e in GTS_EXPERIMENTS if e["name"] == variant)
+    def write(variant, stage="quantizer", experiments=GTS_EXPERIMENTS):
+        exp = next(e for e in experiments if e["name"] == variant)
         if stage == "quantizer":
             cmd, _, _, _ = prepare_quantizer_task(exp, 42, dry_run=False)
             config_path = cmd[-1]
@@ -35,7 +54,7 @@ def written_config(tmp_path, monkeypatch):
                     run_recommender_task(exp, 42, "semids.pt", dry_run=False)
             config_path = run_command.call_args.args[0][run_command.call_args.args[0].index("--config") + 1]
         config = OmegaConf.to_container(OmegaConf.load(config_path))
-        return {f"{section}.{key}": value for section, keys in config.items() for key, value in keys.items()}
+        return flatten(config)
     return write
 
 
@@ -191,3 +210,90 @@ def test_rfsq_fixed_generate_config_has_the_data_and_model_sections_of_the_quant
     train, generate = written_config("RFSQ_Fixed_4444_qd05"), written_config("RFSQ_Fixed_4444_qd05", "generate")
     section = lambda config, name: {k: v for k, v in config.items() if k.startswith(name + ".")}
     assert (section(generate, "data"), section(generate, "model")) == (section(train, "data"), section(train, "model"))
+
+
+DATASET_DIFF = {"data.dataset": ("amazon", "music4all_onion"), "data.category": ("toys", MISSING)}
+QUANTIZER_DIFF = {**DATASET_DIFF, "general.wandb_project_quantizer": ("mt-amazon-quantizer", "mt-onion-quantizer")}
+RECOMMENDER_DIFF = {**DATASET_DIFF, "seq2seq.num_epochs": (1471, 1961), "seq2seq.eval_delay_epochs": (150, 200),
+                    "general.wandb_project_recommender": ("mt-amazon-recommender", "mt-onion-recommender"),
+                    "general.wandb_project_quantizer": (MISSING, "mt-onion-quantizer")}
+
+
+def test_onion_rqkmeans_config_differs_from_toys_only_in_the_dataset():
+    # every Stage-1 setting stays the Toys reference; Onion has no category
+    assert config_diff("config/rq-kmeans/amazon_toy_rqkmeans_gts.yaml",
+                       "config/rq-kmeans/onion_rqkmeans_gts.yaml") == DATASET_DIFF
+
+
+def test_onion_fsq_config_differs_from_toys_only_in_the_dataset_and_wandb_project():
+    # Onion runs must not mix into the Toys quantizer curves
+    assert config_diff("config/fsq/amazon_toy_gts.yaml", "config/fsq/onion_gts.yaml") == QUANTIZER_DIFF
+
+
+def test_onion_rqvae_config_differs_from_toys_only_in_the_dataset_and_wandb_project():
+    # same reason as for FSQ
+    assert config_diff("config/rq-vae/amazon_toy_tiger_gts.yaml", "config/rq-vae/onion_tiger_gts.yaml") == QUANTIZER_DIFF
+
+
+def test_onion_recommender_config_differs_from_toys_only_in_dataset_budget_and_wandb_projects():
+    # 100k steps at 51 steps per epoch, first evaluation after 10,200 steps; the quantizer project links the parent run
+    assert config_diff("config/recommender/amazon_toy_grid_gts.yaml",
+                       "config/recommender/onion_grid_gts.yaml") == RECOMMENDER_DIFF
+
+
+def test_onion_fsq_recommender_config_differs_from_toys_in_the_same_keys():
+    # like the Toys pair, it differs from the other recommender file only in the codebook size
+    assert config_diff("config/recommender/amazon_toy_grid_fsq_gts.yaml",
+                       "config/recommender/onion_grid_fsq_gts.yaml") == RECOMMENDER_DIFF
+
+
+def test_onion_experiments_are_the_toys_reference_variants_on_the_onion_configs():
+    # the Stage-1 defaults live in one place, the Toys variants
+    toys = {e["name"]: e for e in GTS_EXPERIMENTS}
+    assert [e["name"] for e in ONION_GTS_EXPERIMENTS] == ["RQ_VAE_cal_b025_lr001_20k", "FSQ_20k", "RQ_KMeans"]
+    assert ONION_GTS_EXPERIMENTS == [
+        {**toys["RQ_VAE_cal_b025_lr001_20k"], "quant_config": "config/rq-vae/onion_tiger_gts.yaml",
+         "recommender_config": "config/recommender/onion_grid_gts.yaml"},
+        {**toys["FSQ_20k"], "quant_config": "config/fsq/onion_gts.yaml",
+         "recommender_config": "config/recommender/onion_grid_fsq_gts.yaml"},
+        {**toys["RQ_KMeans"], "quant_config": "config/rq-kmeans/onion_rqkmeans_gts.yaml",
+         "recommender_config": "config/recommender/onion_grid_gts.yaml"},
+    ]
+
+
+@pytest.mark.parametrize("variant, expected_diff", [("RQ_VAE_cal_b025_lr001_20k", QUANTIZER_DIFF),
+                                                    ("FSQ_20k", QUANTIZER_DIFF), ("RQ_KMeans", DATASET_DIFF)])
+def test_written_onion_quantizer_config_differs_from_toys_only_in_the_dataset_and_wandb_project(
+        written_config, variant, expected_diff):
+    # what actually runs: the variant's overrides reach the Onion run
+    toys = written_config(variant)
+    onion = written_config(variant, experiments=ONION_GTS_EXPERIMENTS)
+    assert flat_diff(toys, onion) == expected_diff
+
+
+def test_select_experiments_returns_the_onion_list_for_the_onion_dataset():
+    # the new option reaches the new list
+    assert select_experiments("music4all_onion", "gts", None) is ONION_GTS_EXPERIMENTS
+
+
+def test_select_experiments_keeps_the_toys_lists():
+    # the default runs do not change
+    assert select_experiments("toys", "gts", None) is GTS_EXPERIMENTS
+    assert select_experiments("toys", "loo", None) is LOO_EXPERIMENTS
+
+
+def test_select_experiments_rejects_the_onion_dataset_under_leave_one_out():
+    # Onion has only the global temporal split
+    with pytest.raises(ValueError, match="only under --protocol gts"):
+        select_experiments("music4all_onion", "loo", None)
+
+
+def test_select_experiments_filters_variants_case_insensitively_in_the_given_order():
+    by_name = {e["name"]: e for e in ONION_GTS_EXPERIMENTS}
+    assert select_experiments("music4all_onion", "gts", "rq_kmeans,FSQ_20k") == [by_name["RQ_KMeans"], by_name["FSQ_20k"]]
+
+
+def test_select_experiments_rejects_a_toys_only_variant_for_the_onion_dataset():
+    # a Toys-only variant must not run with Toys configs in an Onion output folder
+    with pytest.raises(ValueError, match=r"unknown \['RQ_VAE'\].*RQ_VAE_cal_b025_lr001_20k"):
+        select_experiments("music4all_onion", "gts", "RQ_VAE")

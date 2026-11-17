@@ -1,0 +1,23 @@
+# Music4All-Onion variant of amazon_toy_rqkmeans_gts.yaml (same settings, other data); the quantizer fits on the
+# stage-1 items only. The current Stage-1 defaults are set by the experiment entries in run_experiments.py.
+# data loader configuration
+data:
+  dataset: "music4all_onion"
+  input_normalization: "center_l2" # none | center | center_l2 | std_l2
+  split_protocol: "gts" # global temporal split
+  gts_q_test: 0.9
+  gts_q_val: 0.9
+
+# model configuration (RQ-KMeans)
+model:
+  codebook_layers: 3
+  codebook_size: 256
+  n_iters: 100
+  normalize_residuals: True
+
+# additional configuration
+general:
+  seed: 10
+  save_model: True
+  model_path: "models/rqkmeans/rqkmeans.pt"
+  output_path: "outputs/rqkmeans/rqkmeans_semids.pt"
