@@ -1,3 +1,4 @@
+import hashlib
 import os
 
 import pandas as pd
@@ -7,10 +8,23 @@ from sentence_transformers import SentenceTransformer
 
 from data.amazon_data import AmazonReviews
 from data.amazon_interactions import read_amazon_interactions
-from data.split_cache import load_or_build_split
+from data.onion_features import read_onion_features
+from data.onion_interactions import read_onion_interactions
+from data.split_cache import check_meta, load_or_build_split, save_atomic
 
 AMAZON_ROOT = "dataset/amazon"
 AMAZON_PROCESSED_DIR = f"{AMAZON_ROOT}/processed"
+
+ONION_ROOT = "dataset/music4all_onion"
+ONION_PROCESSED_DIR = f"{ONION_ROOT}/processed"
+ONION_EVENTS = "userid_trackid_timestamp.tsv.bz2"
+# The thesis subset of Music4All-Onion: the listening events of August and September 2019
+# (both bounds inclusive, as stored), the 5-core on distinct (user, track) pairs, and the
+# MAEST audio embeddings as item features.
+ONION_SUBSET = {"start": "2019-08-01 00:00:00", "end": "2019-09-30 23:59:59", "k": 5,
+                "features": "id_maest.tsv.bz2"}
+# increase when the reader rules or the stored layout change
+ONION_FORMAT_VERSION = 1
 
 
 def _load_amazon_data(category):
@@ -82,18 +96,36 @@ def load_amazon(category, split_config, input_normalization, split='train'):
     else:
         train_mask = data['item']['is_train'] == True
 
-    data['item']['x'] = normalize_items(data['item']['x'], train_mask, input_normalization)
+    return select_items(data['item']['x'], train_mask, input_normalization, split)
 
+
+def select_items(x, train_mask, input_normalization, split):
+    """
+    The item embeddings of one item split, normalized with statistics of the training items
+    (normalize_items).
+
+    split: 'train' (the items of train_mask), 'test' (the others) or 'all' (every item, in
+    item id order).
+    """
+    x = normalize_items(x, train_mask, input_normalization)
     if split == 'all':
-        data_clean = data['item']['x']
-    elif split == 'train':
-        data_clean = data['item']['x'][train_mask]
-    elif split == 'test':
-        data_clean = data['item']['x'][~train_mask]
-    else:
-        raise ValueError(f"Invalid split: {split}. Must be 'train', 'test', or 'all'.")
+        return x
+    if split == 'train':
+        return x[train_mask]
+    if split == 'test':
+        return x[~train_mask]
+    raise ValueError(f"Invalid split: {split}. Must be 'train', 'test', or 'all'.")
 
-    return data_clean
+
+def split_sequences(split):
+    """
+    (sequences, num_users, num_items) of a cached split: its rows per split name, the
+    number of distinct users with at least one row, the number of items.
+    """
+    sequences = split['history']
+    num_users = torch.cat([rows['userId'] for rows in sequences.values()]).unique().numel()
+    return sequences, num_users, split['meta']['num_items']
+
 
 def load_amazon_sequences(category, split_config):
     """
@@ -110,10 +142,92 @@ def load_amazon_sequences(category, split_config):
             num_users: Number of distinct users with at least one row
             num_items: Total number of items
     """
-    split = load_amazon_split(category, split_config)
-    sequences = split['history']
-    num_users = torch.cat([rows['userId'] for rows in sequences.values()]).unique().numel()
-    return sequences, num_users, split['meta']['num_items']
+    return split_sequences(load_amazon_split(category, split_config))
+
+
+def _onion_tag(subset):
+    """<start date>_<end date>_k<k>: the part of the file names that fixes the events."""
+    return f"{subset['start'][:10]}_{subset['end'][:10]}_k{subset['k']}"
+
+
+def onion_data_path(subset):
+    """data_onion_<start date>_<end date>_k<k>_<feature>.pt in the Onion processed folder."""
+    feature = subset['features'].removeprefix("id_").removesuffix(".tsv.bz2")
+    return f"{ONION_PROCESSED_DIR}/data_onion_{_onion_tag(subset)}_{feature}.pt"
+
+
+def _load_onion_data(subset):
+    """
+    The data file of a Music4All-Onion subset: track ids, sequences (data/onion_interactions.py),
+    item features in track id order (data/onion_features.py), the md5 of the sequences and
+    a meta. Built from the raw files on first use. A file whose meta differs from the
+    current format version or subset raises a ValueError.
+    """
+    path = onion_data_path(subset)
+    meta = {"format_version": ONION_FORMAT_VERSION, **subset}
+    if os.path.exists(path):
+        data = torch.load(path, weights_only=False)
+        check_meta(data, meta, path)
+        return data
+
+    raw = f"{ONION_ROOT}/raw"
+    sequences, track_ids = read_onion_interactions(
+        f"{raw}/{ONION_EVENTS}", subset['start'], subset['end'], subset['k'])
+    data = {
+        "track_ids": track_ids,
+        "sequences": sequences,
+        "x": read_onion_features(f"{raw}/{subset['features']}", track_ids),
+        "sequences_md5": hashlib.md5(repr(sequences).encode()).hexdigest(),
+        "meta": meta,
+    }
+    save_atomic(data, path)
+    return data
+
+
+def _load_onion_data_and_split(split_config, subset):
+    """
+    The data file and the cached split of a Music4All-Onion subset. The split file name
+    carries the md5 of the sequences, so changed sequences never reuse an old split: their
+    item count and item ids, the only inputs the split meta checks, can stay the same.
+    """
+    if split_config.protocol != 'gts':
+        raise ValueError(f"Music4All-Onion supports only the global temporal split ('gts'), "
+                         f"got {split_config.protocol!r}")
+    data = _load_onion_data(subset)
+    num_items = len(data['track_ids'])
+    split = load_or_build_split(
+        name=f"onion_{_onion_tag(subset)}_{data['sequences_md5'][:8]}",
+        split_config=split_config,
+        processed_dir=ONION_PROCESSED_DIR,
+        read_sequences=lambda: data['sequences'],
+        # the model item id of a track is its position in track_ids, without a permutation
+        id_permutation=torch.arange(num_items),
+        num_items=num_items,
+    )
+    return data, split
+
+
+def load_onion_split(split_config, subset=ONION_SUBSET):
+    """The Stage-2 split of a Music4All-Onion subset, built on first use and cached."""
+    return _load_onion_data_and_split(split_config, subset)[1]
+
+
+def load_onion(split_config, input_normalization, split='train', subset=ONION_SUBSET):
+    """
+    The item features of a Music4All-Onion subset: 'train' are the Stage-1 (warm) items of
+    the global temporal split, 'test' the others, 'all' every item.
+    input_normalization: see normalize_items; its statistics come from the 'train' items.
+    """
+    data, gts_split = _load_onion_data_and_split(split_config, subset)
+    return select_items(data['x'], gts_split['stage1_items'], input_normalization, split)
+
+
+def load_onion_sequences(split_config, subset=ONION_SUBSET):
+    """
+    The user history rows of a Music4All-Onion subset under the global temporal split;
+    same return value as load_amazon_sequences.
+    """
+    return split_sequences(load_onion_split(split_config, subset))
 
 def load_movie_lens(category='1M', dimension="user", train=True, raw=True):
     # Build the file path

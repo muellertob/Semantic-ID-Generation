@@ -39,19 +39,19 @@ def split_meta(id_permutation, num_items, split_config: SplitConfig) -> dict:
     }
 
 
-def check_split_meta(split, expected, path):
+def check_meta(cached, expected, path):
     """
-    Raise a ValueError naming every field of the split's meta that differs from the
-    expected meta. A split without meta counts as stale.
+    Raise a ValueError naming every field of a cached file's meta that differs from the
+    expected meta. A file without meta counts as stale.
     """
-    meta = split.get("meta")
+    meta = cached.get("meta")
     if meta is None:
-        raise ValueError(f"Split {path} has no meta (stale cache). "
+        raise ValueError(f"{path} has no meta (stale cache). "
                          f"Delete the file so it is rebuilt.")
     mismatches = [f"{k}: file has {meta.get(k)!r}, expected {v!r}"
                   for k, v in expected.items() if meta.get(k) != v]
     if mismatches:
-        raise ValueError(f"Split {path} does not match the current code or data "
+        raise ValueError(f"{path} does not match the current code or data "
                          f"({'; '.join(mismatches)}). Delete the file so it is rebuilt.")
 
 
@@ -90,7 +90,7 @@ def load_or_build_split(name, split_config, processed_dir, read_sequences, id_pe
 
     if os.path.exists(path):
         split = torch.load(path, weights_only=False)
-        check_split_meta(split, meta, path)
+        check_meta(split, meta, path)
         return split
 
     sequences = read_sequences()
