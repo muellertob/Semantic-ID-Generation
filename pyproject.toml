@@ -33,6 +33,7 @@ dependencies = [
     "seaborn",
     "marimo",
     "plotly",
+    "optuna==5.1.*",
 ]
 
 # Define the official PyTorch CUDA index for Linux
