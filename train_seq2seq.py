@@ -141,9 +141,15 @@ def compute_metrics(model, dataloader, device, k_list=[5, 10]):
 
     return accumulator.compute()
 
-def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_override=None, overrides=None):
+def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_override=None, overrides=None,
+                 on_validation=None):
     """
     Orchestrate TIGER Seq2Seq training.
+
+    on_validation: optional callable, called once per validation after the checkpoint decision with
+        {"epoch": completed epochs, "global_step": optimizer steps so far, "recall@k" / "ndcg@k": the
+        validation metrics, "best_<checkpoint metric>": best value so far}. It must return a bool;
+        True ends training right after this validation (the best checkpoint is already saved).
     """
     config = OmegaConf.load(config_path)
     OmegaConf.set_struct(config, False)
@@ -522,6 +528,18 @@ def run_training(config_path, semantic_ids_path, resume_path=None, warmup_steps_
                 logger.info(f"No improvement in {checkpoint_metric} for {metric_no_improve} evaluations.")
                 if early_stopping and early_stopping_patience is not None and metric_no_improve >= early_stopping_patience:
                     logger.info(f"Early stopping triggered. {checkpoint_metric} hasn't improved for {early_stopping_patience} evaluations.")
+                    stop_training = True
+
+            if on_validation is not None:
+                record = {"epoch": epoch + 1, "global_step": global_step}
+                record.update({f"recall@{k}": float(v) for k, v in avg_recall.items()})
+                record.update({f"ndcg@{k}": float(v) for k, v in avg_ndcg.items()})
+                record[f"best_{checkpoint_metric}"] = float(best_metric)
+                stop_requested = on_validation(record)
+                if not isinstance(stop_requested, bool):
+                    raise TypeError(f"on_validation must return a bool, got {type(stop_requested).__name__}")
+                if stop_requested:
+                    logger.info(f"Stop requested by on_validation at epoch {epoch + 1} (step {global_step}).")
                     stop_training = True
 
             # merge metrics into wandb log

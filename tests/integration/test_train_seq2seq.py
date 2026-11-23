@@ -9,6 +9,7 @@ Verifies:
   - eval_delay_epochs skips retrieval metrics calculation during warmup phase
   - the seq2seq.checkpoint_metric block ({metric, k}) selects the metric for checkpointing / early stopping
     (default recall at k=5) and resuming restores the best value of that metric
+  - the optional on_validation callback gets one record per validation and can stop training
 
 Fixtures (seq2seq_config, semids_path, mock_seq2seq_model, mock_amazon_sequences)
 are defined in tests/integration/conftest.py.
@@ -525,3 +526,129 @@ class TestCheckpointName:
         save_path, meta = train_and_get_meta(None)
         assert (os.path.basename(save_path), meta["recommender_run_name"]) == (
             "RQ-VAE_seed_42_best.pt", "RQ-VAE_seed_42")
+
+
+# ---- on_validation callback ------------------------------------------------------------------
+# Every test below trains with ndcg@10 as checkpoint metric, one validation per epoch (unless stated),
+# and these validation reports (recall@5 = recall@10 = 1.0 and ndcg@5 = 0.5 throughout):
+#
+# validation | epoch | global_step | ndcg@10 | best_ndcg@10 | save_checkpoint (epoch index, value)
+#     1      |   1   |      5      |  0.30   |    0.30      | (0, 0.30)
+#     2      |   2   |     10      |  0.20   |    0.30      | -
+#     3      |   3   |     15      |  0.40   |    0.40      | (2, 0.40)
+#     4      |   4   |     20      |  0.35   |    0.40      | -
+#
+# global_step: the fixture has 10 training rows at batch size 2, so one epoch is 5 optimizer steps.
+VALIDATION_NDCG10 = [0.30, 0.20, 0.40, 0.35]
+
+
+def _record(epoch, step, ndcg10, best):
+    return {"epoch": epoch, "global_step": step, "recall@5": 1.0, "recall@10": 1.0,
+            "ndcg@5": 0.5, "ndcg@10": ndcg10, "best_ndcg@10": best}
+
+
+def _recording_callback(records, returns):
+    """Appends each record to `records` and returns the next value of `returns`."""
+    answers = iter(returns)
+
+    def on_validation(record):
+        records.append(record)
+        return next(answers)
+    return on_validation
+
+
+@pytest.fixture
+def train_with_callback(seq2seq_config, semids_path, mock_seq2seq_model, mock_amazon_sequences):
+    """Returns run(on_validation, epochs, interval, overrides) -> (save calls, compute_metrics calls, evaluate_loss calls)."""
+    import train_seq2seq
+
+    def run(on_validation, epochs=4, interval=1, overrides=()):
+        _, config_path = seq2seq_config
+        reports = [_report(ndcg={5: 0.5, 10: v}) for v in VALIDATION_NDCG10]
+        all_overrides = [f"seq2seq.num_epochs={epochs}", f"seq2seq.eval_epoch_interval={interval}",
+                         "seq2seq.eval_delay_epochs=0", "seq2seq.early_stopping=False",
+                         "seq2seq.checkpoint_metric.metric=ndcg", "seq2seq.checkpoint_metric.k=10", *overrides]
+        with patch("train_seq2seq.compute_metrics", side_effect=reports) as mock_compute, \
+                patch("train_seq2seq.evaluate_loss", wraps=train_seq2seq.evaluate_loss) as mock_eval_loss, \
+                patch("train_seq2seq.load_sequences", return_value=(mock_amazon_sequences, 10, 20)), \
+                patch("train_seq2seq.TigerSeq2Seq", return_value=mock_seq2seq_model), \
+                patch("train_seq2seq.save_checkpoint") as mock_save:
+            train_seq2seq.run_training(config_path, semids_path, overrides=all_overrides, on_validation=on_validation)
+        saves = [(c.args[4], c.args[5]) for c in mock_save.call_args_list]
+        return saves, mock_compute.call_count, mock_eval_loss.call_count
+    return run
+
+
+class TestValidationCallback:
+
+    def test_without_callback_training_is_unchanged(self, train_with_callback):
+        saves, n_compute, _ = train_with_callback(None)
+        assert (saves, n_compute) == ([(0, 0.30), (2, 0.40)], 4)
+
+    def test_callback_gets_one_exact_record_per_validation(self, train_with_callback):
+        records = []
+        train_with_callback(_recording_callback(records, [False] * 4))
+        assert records == [_record(1, 5, 0.30, 0.30), _record(2, 10, 0.20, 0.30),
+                           _record(3, 15, 0.40, 0.40), _record(4, 20, 0.35, 0.40)]
+
+    def test_records_survive_a_json_round_trip(self, train_with_callback):
+        import json
+        records = []
+        train_with_callback(_recording_callback(records, [False] * 4))
+        # the worker writes each record to a JSON lines file; tensors or numpy floats would not survive
+        assert [json.loads(json.dumps(r)) for r in records] == records
+
+    def test_callback_runs_only_at_validation_epochs_and_the_last_epoch(self, train_with_callback):
+        # interval 2 over 5 epochs: validations after epochs 2 and 4, and after the last epoch 5
+        records = []
+        train_with_callback(_recording_callback(records, [False] * 3), epochs=5, interval=2)
+        assert [(r["epoch"], r["global_step"]) for r in records] == [(2, 10), (4, 20), (5, 25)]
+
+    def test_callback_runs_after_the_checkpoint_decision(self, train_with_callback):
+        import train_seq2seq
+        saves_seen = []
+
+        def on_validation(record):
+            # save_checkpoint is the patched mock while training runs
+            saves_seen.append(train_seq2seq.save_checkpoint.call_count)
+            return False
+        train_with_callback(on_validation)
+        # validations 1 and 3 save a new best before the callback sees them
+        assert saves_seen == [1, 1, 2, 2]
+
+    def test_true_stops_training_right_after_that_validation(self, train_with_callback):
+        _, n_compute, n_eval_loss = train_with_callback(_recording_callback([], [False, True]))
+        # no third epoch: neither its loss evaluation nor its validation runs
+        assert (n_compute, n_eval_loss) == (2, 2)
+
+    def test_stop_keeps_the_best_checkpoint_of_that_validation(self, train_with_callback):
+        # the stop comes at validation 3, which is also a new best (0.40)
+        saves, _, _ = train_with_callback(_recording_callback([], [False, False, True]))
+        assert saves == [(0, 0.30), (2, 0.40)]
+
+    def test_train_meta_is_written_after_a_stop(self, train_with_callback, tmp_path, semids_path):
+        import json
+        # a sid_type in the SIDs file makes general.run_name name the run (see TestCheckpointName)
+        semids = torch.load(semids_path, weights_only=False)
+        semids["sid_type"] = "RQ-VAE"
+        torch.save(semids, semids_path)
+        rec_dir, meta_path = tmp_path / "rec", tmp_path / "meta.json"
+        train_with_callback(_recording_callback([], [False, True]),
+                            overrides=[f"general.recommender_model_dir={rec_dir}", f"general.meta_json={meta_path}",
+                                       "general.run_name=trial"])
+        with open(meta_path) as f:
+            assert json.load(f) == {"recommender_run_name": "trial",
+                                    "best_model_path": os.path.join(str(rec_dir), "trial_best.pt")}
+
+    def test_callback_must_return_a_bool(self, train_with_callback):
+        # a forgotten return (None) must not count as "continue": the error comes at the first validation
+        records = []
+        with pytest.raises(TypeError, match="on_validation must return a bool, got NoneType"):
+            train_with_callback(_recording_callback(records, [None]))
+        assert records == [_record(1, 5, 0.30, 0.30)]
+
+    def test_exception_in_callback_propagates(self, train_with_callback):
+        def on_validation(record):
+            raise RuntimeError("reporter failed")
+        with pytest.raises(RuntimeError, match="reporter failed"):
+            train_with_callback(on_validation)
