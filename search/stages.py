@@ -10,8 +10,10 @@ import json
 from pathlib import Path
 
 import generate_semids
+import test_seq2seq
 import train_quantizer
 import train_rqkmeans
+import train_seq2seq
 from search.config_io import write_resolved_config
 from search.spec import TrialSpec
 
@@ -40,6 +42,12 @@ class Stage1Result:
     semids: Path
     quantizer_meta: dict
     generate_meta: dict | None  # None for RQ-KMeans, which writes its SIDs while fitting
+
+
+@dataclasses.dataclass(frozen=True)
+class Stage2Result:
+    best_checkpoint: Path
+    train_meta: dict
 
 
 def base_configs(dataset: str, quantizer: str) -> tuple[Path, Path]:
@@ -89,6 +97,47 @@ def stage1(spec: TrialSpec, folder: str | Path, compile: bool) -> Stage1Result:
     generate_semids.run_generation(str(generate_config), model_path=driver["general.model_path"],
                                    output_path=str(semids))
     return Stage1Result(semids, quantizer_meta_data, _read_meta(generate_meta))
+
+
+def semids_path(spec: TrialSpec, folder: str | Path) -> Path:
+    """The SIDs Stage 2 trains on: the source trial's when semids_from is set, else this trial's own."""
+    if spec.semids_from is not None:
+        return Path(spec.semids_from) / "semids.pt"
+    return Path(folder) / "semids.pt"
+
+
+def stage2(spec: TrialSpec, folder: str | Path, compile: bool, on_validation) -> Stage2Result:
+    """
+    Train the recommender of `spec` on its SIDs; `on_validation` is passed through to train_seq2seq.run_training.
+    The best checkpoint is <folder>/checkpoints/stage2_best.pt, as named in the train meta.
+    """
+    _reject_driver_keys("stage2_overrides", spec.stage2_overrides)
+    folder = Path(folder)
+    _, base = base_configs(spec.dataset, spec.quantizer)
+    train_meta = folder / "meta" / "train.json"
+    driver = {
+        "general.seed": spec.stage2_seed,
+        "general.meta_json": str(train_meta),
+        "general.run_name": "stage2",
+        "general.recommender_model_dir": str(folder / "checkpoints"),
+        "general.wandb_dir": str(folder / "wandb"),
+        "general.compile": compile,
+    }
+    config = _write(base, spec.stage2_overrides, driver, folder / "configs" / "stage2.yaml")
+    train_seq2seq.run_training(str(config), str(semids_path(spec, folder)), on_validation=on_validation)
+    meta = _read_meta(train_meta)
+    return Stage2Result(Path(meta["best_model_path"]), meta)
+
+
+def test(spec: TrialSpec, folder: str | Path, best_checkpoint: str | Path) -> dict:
+    """Evaluate `best_checkpoint` on the test split with the Stage-2 config of this trial; returns the test meta."""
+    folder = Path(folder)
+    test_meta = folder / "meta" / "test.json"
+    # the trained config itself, so the model is tested exactly as it was trained; only the meta file differs
+    config = write_resolved_config(folder / "configs" / "stage2.yaml", {"general.meta_json": str(test_meta)},
+                                   folder / "configs" / "test.yaml")
+    test_seq2seq.run_testing(str(config), str(semids_path(spec, folder)), model_path=str(best_checkpoint))
+    return _read_meta(test_meta)
 
 
 def _write(base: Path, overrides: dict, driver: dict, dest: Path) -> Path:
