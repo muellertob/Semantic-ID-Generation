@@ -18,7 +18,7 @@ from omegaconf import OmegaConf
 
 from schemas.quantization import QuantizeForwardMode, QuantizeDistance
 from modules.rqvae.scheduler import create_temperature_scheduler
-from utils.wandb import wandb_init, get_run_name, log_model_artifact
+from utils.wandb import wandb_init, get_run_name, log_model_artifact, prefix_run_name
 from data.factory import load_data
 from modules.rqvae.model import RQ_VAE
 from modules.fsq.model import FSQ_AutoEncoder, ResidualFSQ_AutoEncoder, FixedScaleResidualFSQ_AutoEncoder
@@ -322,9 +322,7 @@ def run_training(config_path, overrides=None):
 
     if config.general.use_wandb:
         wandb_init(config, project=config.general.wandb_project_quantizer)
-        if wandb.run is not None:
-            if not wandb.run.name.startswith(f"{prefix}-"):
-                wandb.run.name = f"{prefix}-{wandb.run.name}"
+        prefix_run_name(config, prefix)
         wandb.define_metric("Epoch")
         wandb.define_metric("*", step_metric="Epoch")
         # use WandB run name if provided, otherwise fallback to generated model_id

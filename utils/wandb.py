@@ -19,20 +19,37 @@ def wandb_init(config, project: str, run_name: str = None, group: str = None, jo
         group    : Optional custom group name.
         job_type : Optional custom job type name.
         tags     : Optional list of tags.
+
+    general.wandb_project, general.wandb_run_name, general.wandb_group and general.wandb_tags, when set, win over
+    project, run_name, group and tags: the search driver names its runs through the config.
     """
     wandb_dir = config.general.get("wandb_dir", os.path.join("outputs", "wandb", "runs"))
     os.makedirs(wandb_dir, exist_ok=True)
     wandb.init(
-        project=project,
-        name=run_name,
-        group=group,
+        project=_from_config(config, "wandb_project", project),
+        name=_from_config(config, "wandb_run_name", run_name),
+        group=_from_config(config, "wandb_group", group),
         job_type=job_type,
-        tags=tags,
+        tags=_from_config(config, "wandb_tags", tags),
         entity=config.general.wandb_entity,
         config=OmegaConf.to_container(config, resolve=True),
         resume="never",
         dir=wandb_dir,
     )
+
+
+def prefix_run_name(config, prefix: str) -> None:
+    """Put `prefix` in front of the active run's generated name, unless the config names the run."""
+    if wandb.run is None or config.general.get("wandb_run_name") is not None:
+        return
+    if not wandb.run.name.startswith(f"{prefix}-"):
+        wandb.run.name = f"{prefix}-{wandb.run.name}"
+
+
+def _from_config(config, key: str, default):
+    # tags may stay an OmegaConf list: wandb.init turns them into a tuple itself
+    value = config.general.get(key)
+    return default if value is None else value
 
 
 def get_run_name(fallback: str) -> str:

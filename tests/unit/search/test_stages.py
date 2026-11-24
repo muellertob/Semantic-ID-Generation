@@ -1,8 +1,8 @@
 """
 Tests for search/stages.py: each stage gets the base config plus the spec's overrides plus the driver's keys
-(seed, paths, compile) of that stage, Stage 2 and the test read the right SIDs, the stage functions are called with those configs, and a stage that
-leaves no meta file is an error. The stage functions are mocked; each mock writes the meta file the real
-function writes to general.meta_json.
+(seed, paths, compile, W&B names) of that stage, Stage 2 and the test read the right SIDs, the stage functions are
+called with those configs, and a stage that leaves no meta file is an error. The stage functions are mocked; each
+mock writes the meta file the real function writes to general.meta_json.
 """
 import dataclasses
 import json
@@ -25,6 +25,8 @@ from search.spec import TrialSpec
 # | general.model_path | -   | <f>/checkpoints/quantizer.pt (inside the trial folder) |
 # | general.meta_json  | -   | <f>/meta/quantizer.json (generate: meta/generate.json) |
 # | general.wandb_dir  | -   | <f>/wandb                                             |
+# | general.wandb_*    | -   | project sid-search-toys-stage1, group A-rqvae (the study folder), |
+# |                    |     | name A-rqvae-trial_0007, tags [A, rqvae, eager]                  |
 STAGE1_BASE_YAML = """\
 model:
   beta: 6.0
@@ -50,6 +52,7 @@ SPEC = TrialSpec(
 # | general.recommender_model_dir | - | <f>/checkpoints (inside the trial folder)     |
 # | general.meta_json| -     | <f>/meta/train.json (test: meta/test.json)                 |
 # | general.wandb_dir| -     | <f>/wandb                                                  |
+# | general.wandb_*  | -     | as Stage 1, with stage2 (project sid-search-toys-stage2)   |
 STAGE2_BASE_YAML = """\
 seq2seq:
   dropout: 0.1
@@ -101,14 +104,16 @@ def stage1_mocks(tmp_path, monkeypatch):
     with patch.object(stages.train_quantizer, "run_training", side_effect=_writes_meta(QUANTIZER_META)) as quantizer, \
             patch.object(stages.train_rqkmeans, "run_training", side_effect=_writes_meta(QUANTIZER_META)) as rqkmeans, \
             patch.object(stages.generate_semids, "run_generation", side_effect=_writes_meta(GENERATE_META)) as generate:
-        yield tmp_path / "trial_0007", {"quantizer": quantizer, "rqkmeans": rqkmeans, "generate": generate}
+        yield tmp_path / "A-rqvae" / "trial_0007", {"quantizer": quantizer, "rqkmeans": rqkmeans, "generate": generate}
 
 
 def _expected_stage1_config(folder, meta_name):
     return {
         "model": {"beta": 0.25},
         "general": {"seed": 42, "use_wandb": False, "model_path": f"{folder}/checkpoints/quantizer.pt",
-                    "meta_json": f"{folder}/meta/{meta_name}", "wandb_dir": f"{folder}/wandb", "compile": False},
+                    "meta_json": f"{folder}/meta/{meta_name}", "wandb_dir": f"{folder}/wandb", "compile": False,
+                    "wandb_project": "sid-search-toys-stage1", "wandb_group": "A-rqvae",
+                    "wandb_run_name": "A-rqvae-trial_0007", "wandb_tags": ["A", "rqvae", "eager"]},
     }
 
 
@@ -162,6 +167,7 @@ def test_rqkmeans_writes_its_semids_while_fitting_and_skips_generate(stage1_mock
     stages.stage1(dataclasses.replace(SPEC, quantizer="rqkmeans"), folder, compile=False)
     expected = _expected_stage1_config(folder, "quantizer.json")
     expected["general"]["output_path"] = f"{folder}/semids.pt"
+    expected["general"]["wandb_tags"] = ["A", "rqkmeans", "eager"]  # the tag follows the spec
     assert mocks["rqkmeans"].call_args_list == [call(str(folder / "configs" / "stage1.yaml"))]
     assert _load(folder / "configs" / "stage1.yaml") == expected
     assert mocks["generate"].call_count == 0
@@ -230,7 +236,7 @@ def stage2_mocks(tmp_path, monkeypatch):
     monkeypatch.setattr(stages, "BASE_CONFIGS", {("toys", "rqvae"): ("unused.yaml", str(base))})
     with patch.object(stages.train_seq2seq, "run_training", side_effect=_writes_train_meta) as train, \
             patch.object(stages.test_seq2seq, "run_testing", side_effect=_writes_meta(TEST_META)) as test:
-        yield tmp_path / "trial_0007", {"train": train, "test": test}
+        yield tmp_path / "A-rqvae" / "trial_0007", {"train": train, "test": test}
 
 
 def _expected_stage2_config(folder, meta_name):
@@ -238,7 +244,9 @@ def _expected_stage2_config(folder, meta_name):
         "seq2seq": {"dropout": 0.2},
         "general": {"seed": 7, "compile": False, "use_wandb": False, "meta_json": f"{folder}/meta/{meta_name}",
                     "run_name": "stage2", "recommender_model_dir": f"{folder}/checkpoints",
-                    "wandb_dir": f"{folder}/wandb"},
+                    "wandb_dir": f"{folder}/wandb", "wandb_project": "sid-search-toys-stage2",
+                    "wandb_group": "A-rqvae", "wandb_run_name": "A-rqvae-trial_0007",
+                    "wandb_tags": ["A", "rqvae", "eager"]},
     }
 
 
@@ -274,6 +282,36 @@ def test_stage2_override_of_a_driver_key_is_rejected(stage2_mocks):
         _stage2(spec, folder)
     assert str(excinfo.value) == "stage2_overrides must not set driver keys: ['general.seed']"
     assert [m.call_count for m in mocks.values()] == [0, 0]
+
+
+def test_a_compiled_stage2_is_tagged_compile(stage2_mocks):
+    folder, _ = stage2_mocks
+    expected = _expected_stage2_config(folder, "train.json")
+    expected["general"].update(compile=True, wandb_tags=["A", "rqvae", "compile"])
+
+    assert _load(stages.stage2_config(SPEC, folder, compile=True)) == expected
+
+
+def test_a_rerun_is_grouped_by_its_source_trial(stage2_mocks):
+    # the seeds of one candidate stand together in W&B; the phase tag tells confirmation from final runs
+    folder, _ = stage2_mocks
+    rerun = folder.parent.parent / "rerun" / "A-rqvae-t0007" / "seed_7"
+
+    expected = _expected_stage2_config(rerun, "train.json")
+    expected["general"].update(wandb_group="A-rqvae-t0007", wandb_run_name="A-rqvae-t0007-seed_7",
+                               wandb_tags=["confirm", "rqvae", "eager"])
+
+    assert _load(stages.stage2_config(dataclasses.replace(SPEC, phase="confirm"), rerun, compile=False)) == expected
+
+
+@pytest.mark.parametrize("key", ["general.wandb_group", "general.wandb_run_name", "general.wandb_tags",
+                                 "general.wandb_project"])
+def test_stage2_override_of_a_wandb_name_is_rejected(stage2_mocks, key):
+    # the driver names the run; a spec cannot claim another name than the one W&B shows
+    folder, _ = stage2_mocks
+    with pytest.raises(ValueError) as excinfo:
+        stages.stage2_config(dataclasses.replace(SPEC, stage2_overrides={key: "x"}), folder, compile=False)
+    assert str(excinfo.value) == f"stage2_overrides must not set driver keys: ['{key}']"
 
 
 def test_test_evaluates_the_best_checkpoint_with_the_trained_config(stage2_mocks):

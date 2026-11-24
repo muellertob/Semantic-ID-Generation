@@ -2,8 +2,13 @@
 The stage calls of one search trial.
 
 Each stage first writes its resolved config to <trial>/configs/ (so the trial folder records what ran) and is
-then called as a function in the worker process. The driver keys (seed, paths, compile) are set here and only
-here; a spec override may not set them, so trial.json cannot state another seed or path than the one used.
+then called as a function in the worker process. The driver keys (seed, paths, compile, W&B names) are set here
+and only here; a spec override may not set them, so trial.json cannot state another seed or path than the one used.
+
+W&B: one project per dataset and stage, sid-search-<dataset>-<stage> (each with its own metrics). The group is the
+folder's parent (the study of a search trial, the source trial of a rerun) and the run name <group>-<folder>; both
+are the same in the two projects, so a trial's two runs carry one name. RQ-KMeans fits without W&B, so its Stage-1
+names stay unused.
 """
 import dataclasses
 import json
@@ -34,7 +39,8 @@ BASE_CONFIGS = {
 }
 
 DRIVER_KEYS = ("general.seed", "general.model_path", "general.output_path", "general.meta_json",
-               "general.run_name", "general.recommender_model_dir", "general.wandb_dir", "general.compile")
+               "general.run_name", "general.recommender_model_dir", "general.wandb_dir", "general.compile",
+               "general.wandb_project", "general.wandb_group", "general.wandb_run_name", "general.wandb_tags")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -78,6 +84,7 @@ def stage1(spec: TrialSpec, folder: str | Path, compile: bool) -> Stage1Result:
         "general.meta_json": str(quantizer_meta),
         "general.wandb_dir": str(folder / "wandb"),
         "general.compile": compile,
+        **_wandb_keys(spec, folder, compile, "stage1"),
     }
 
     if spec.quantizer == "rqkmeans":
@@ -118,6 +125,7 @@ def stage2_config(spec: TrialSpec, folder: str | Path, compile: bool) -> Path:
         "general.recommender_model_dir": str(folder / "checkpoints"),
         "general.wandb_dir": str(folder / "wandb"),
         "general.compile": compile,
+        **_wandb_keys(spec, folder, compile, "stage2"),
     }
     return _write(base, spec.stage2_overrides, driver, folder / "configs" / "stage2.yaml")
 
@@ -146,6 +154,15 @@ def test(spec: TrialSpec, folder: str | Path, best_checkpoint: str | Path) -> di
 
 def _write(base: Path, overrides: dict, driver: dict, dest: Path) -> Path:
     return write_resolved_config(base, {**overrides, **driver}, dest, allow_new=DRIVER_KEYS)
+
+
+def _wandb_keys(spec: TrialSpec, folder: Path, compile: bool, stage: str) -> dict:
+    folder = folder.absolute()  # both names from the same path, also for a relative folder
+    group = folder.parent.name
+    return {"general.wandb_project": f"sid-search-{spec.dataset}-{stage}",
+            "general.wandb_group": group,
+            "general.wandb_run_name": f"{group}-{folder.name}",  # no "/": it also names W&B artifacts
+            "general.wandb_tags": [spec.phase, spec.quantizer, "compile" if compile else "eager"]}
 
 
 def _train_meta(folder: Path) -> Path:
