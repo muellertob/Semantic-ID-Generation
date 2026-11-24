@@ -1,5 +1,5 @@
 """
-Tests for search/runner.py with the stage functions and the clean-up calls mocked (no GPU); the Stage-2 config is
+Tests for search/runner.py with the stage functions and the clean-up calls mocked (no GPU); the recommender config is
 resolved for real from a small base, so the metric is read as in a run.
 """
 import itertools
@@ -22,15 +22,15 @@ from search.spec import TrialSpec
 
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
-SPEC = TrialSpec(dataset="toys", quantizer="rqvae", phase="A", stage1_overrides={"model.beta": 0.25},
-                 stage2_overrides={}, stage1_seed=42, stage2_seed=42, semids_from=None, max_steps=100_000,
-                 run_test=False, source={"study": "toys.A.rqvae", "trial_number": 7})
-SPEC_B = TrialSpec(dataset="toys", quantizer="rqvae", phase="B", stage1_overrides={}, stage2_overrides={},
-                   stage1_seed=42, stage2_seed=42, semids_from="/search/toys/A-rqvae/trial_0003", max_steps=100_000,
-                   run_test=False, source={})
+SPEC = TrialSpec(dataset="toys", quantizer="rqvae", phase="A", quantizer_overrides={"model.beta": 0.25},
+                 recommender_overrides={}, quantizer_seed=42, recommender_seed=42, semids_from=None,
+                 max_steps=100_000, run_test=False, source={"study": "toys.A.rqvae", "trial_number": 7})
+SPEC_B = TrialSpec(dataset="toys", quantizer="rqvae", phase="B", quantizer_overrides={}, recommender_overrides={},
+                   quantizer_seed=42, recommender_seed=42, semids_from="/search/toys/A-rqvae/trial_0003",
+                   max_steps=100_000, run_test=False, source={})
 CONTEXT = {"host": "gpu1", "compile": False}
 
-STAGE2_BASE_YAML = """\
+RECOMMENDER_BASE_YAML = """\
 seq2seq:
   checkpoint_metric:
     metric: ndcg
@@ -54,29 +54,31 @@ def _record(step, ndcg, best, recall=0.0, best_recall=0.0):
 CURVE = [_record(68, 0.30, 0.30), _record(136, 0.45, 0.45), _record(204, 0.40, 0.45)]
 
 # the clock advances 10 s per reading, so every finished stage took 10 s
-TEN_SECONDS_EACH = {"stage1_seconds": 10, "stage2_seconds": 10, "test_seconds": None}
+TEN_SECONDS_EACH = {"quantizer_seconds": 10, "recommender_seconds": 10, "test_seconds": None}
+# the quantizer raises before its stage time is taken
+NO_TIMINGS = {"quantizer_seconds": None, "recommender_seconds": None, "test_seconds": None}
 
 # the heartbeat's wall clock is fixed, so every beat has the same content
 BEAT = {"host": socket.gethostname(), "pid": os.getpid(), "time": "2026-11-24T10:00:00+00:00"}
 
 
-def _stage2_sending(records):
-    def stage2(spec, folder, config, on_validation):
+def _recommender_sending(records):
+    def recommender(spec, folder, config, on_validation):
         for record in records:
             on_validation(record)
-        return stages.Stage2Result(Path(folder) / "checkpoints" / "stage2_best.pt", {})
-    return stage2
+        return stages.RecommenderResult(Path(folder) / "checkpoints" / "recommender_best.pt", {})
+    return recommender
 
 
 @pytest.fixture
 def mocks(tmp_path, monkeypatch):
-    """Mocks the stages (except stage2_config), the clock and the clean-up; Stage 2 sends CURVE."""
-    base = tmp_path / "stage2_base.yaml"
-    base.write_text(STAGE2_BASE_YAML)
+    """Mocks the stages (except recommender_config), the clock and the clean-up; the recommender sends CURVE."""
+    base = tmp_path / "recommender_base.yaml"
+    base.write_text(RECOMMENDER_BASE_YAML)
     monkeypatch.setattr(stages, "BASE_CONFIGS", {("toys", "rqvae"): ("unused.yaml", str(base))})
-    found = {"stage1": Mock(), "stage2": Mock(side_effect=_stage2_sending(CURVE)), "test": Mock(),
+    found = {"quantizer": Mock(), "recommender": Mock(side_effect=_recommender_sending(CURVE)), "test": Mock(),
              "wandb": Mock(run=None), "gc": Mock(), "torch": Mock()}
-    for name in ("stage1", "stage2", "test"):
+    for name in ("quantizer", "recommender", "test"):
         monkeypatch.setattr(stages, name, found[name])
     for name in ("wandb", "gc", "torch"):
         monkeypatch.setattr(runner, name, found[name])
@@ -114,9 +116,9 @@ def test_trial_json_holds_spec_context_and_outcome(mocks, folder):
                                                "error": None, "timings": TEN_SECONDS_EACH}}
 
 
-def test_trial_json_is_written_before_stage1_runs(mocks, folder):
+def test_trial_json_is_written_before_quantizer_runs(mocks, folder):
     seen = []
-    mocks["stage1"].side_effect = lambda *args: seen.append(_trial_json(folder))
+    mocks["quantizer"].side_effect = lambda *args: seen.append(_trial_json(folder))
 
     _run(SPEC, folder)
 
@@ -130,7 +132,7 @@ def test_an_existing_trial_json_is_rejected_before_any_stage(mocks, folder):
     with pytest.raises(FileExistsError):
         _run(SPEC, folder)
 
-    assert (mocks["stage1"].call_count, mocks["stage2"].call_count) == (0, 0)
+    assert (mocks["quantizer"].call_count, mocks["recommender"].call_count) == (0, 0)
     # no heartbeat either: the folder still belongs to the earlier run
     assert (sorted(path.name for path in folder.iterdir()), (folder / "trial.json").read_text()) == (
         ["trial.json"], '{"earlier": "run"}')
@@ -141,26 +143,26 @@ def test_a_context_that_is_not_json_leaves_no_trial_json(mocks, folder):
     with pytest.raises(TypeError):
         run_trial(SPEC, folder, None, compile=False, context={"host": Path("/gpu1")})
 
-    assert (sorted(folder.iterdir()), mocks["stage1"].call_count) == ([], 0)
+    assert (sorted(folder.iterdir()), mocks["quantizer"].call_count) == ([], 0)
 
 
 # reruns need it too: the queue judges a stale claim by the run folder's heartbeat
 @pytest.mark.parametrize("with_trial", [True, False], ids=["search-trial", "rerun"])
-def test_the_heartbeat_is_written_before_stage1_runs(mocks, folder, with_trial):
+def test_the_heartbeat_is_written_before_quantizer_runs(mocks, folder, with_trial):
     trial = optuna.create_study(direction="maximize").ask() if with_trial else None
     seen = []
-    mocks["stage1"].side_effect = lambda *args: seen.append(json.loads((folder / "heartbeat").read_text()))
+    mocks["quantizer"].side_effect = lambda *args: seen.append(json.loads((folder / "heartbeat").read_text()))
 
     _run(SPEC, folder, trial)
 
     assert seen == [BEAT]
 
 
-@pytest.mark.parametrize("stage2_raises", [None, RuntimeError("boom"), KeyboardInterrupt()],
+@pytest.mark.parametrize("recommender_raises", [None, RuntimeError("boom"), KeyboardInterrupt()],
                          ids=["complete", "crash", "interrupt"])
-def test_the_heartbeat_thread_is_stopped_after_every_trial(mocks, folder, stage2_raises):
-    if stage2_raises is not None:
-        mocks["stage2"].side_effect = stage2_raises
+def test_the_heartbeat_thread_is_stopped_after_every_trial(mocks, folder, recommender_raises):
+    if recommender_raises is not None:
+        mocks["recommender"].side_effect = recommender_raises
 
     try:
         _run(SPEC, folder)
@@ -170,12 +172,12 @@ def test_the_heartbeat_thread_is_stopped_after_every_trial(mocks, folder, stage2
     assert [thread for thread in threading.enumerate() if thread.name == "heartbeat"] == []
 
 
-def test_semids_from_skips_stage1(mocks, folder):
+def test_semids_from_skips_quantizer(mocks, folder):
     outcome = _run(SPEC_B, folder)
 
-    assert mocks["stage1"].call_count == 0
-    assert mocks["stage2"].call_args_list == [call(SPEC_B, folder, folder / "configs" / "stage2.yaml", ANY)]
-    assert outcome.timings == {"stage1_seconds": None, "stage2_seconds": 10, "test_seconds": None}
+    assert mocks["quantizer"].call_count == 0
+    assert mocks["recommender"].call_args_list == [call(SPEC_B, folder, folder / "configs" / "recommender.yaml", ANY)]
+    assert outcome.timings == {"quantizer_seconds": None, "recommender_seconds": 10, "test_seconds": None}
 
 
 @pytest.mark.parametrize("run_test, expected_calls", [(True, 1), (False, 0)])
@@ -184,7 +186,7 @@ def test_run_test_decides_whether_the_test_set_is_evaluated(mocks, folder, run_t
 
     _run(spec, folder)
 
-    best = folder / "checkpoints" / "stage2_best.pt"
+    best = folder / "checkpoints" / "recommender_best.pt"
     assert mocks["test"].call_args_list == [call(spec, folder, best)] * expected_calls
 
 
@@ -195,15 +197,16 @@ def test_the_value_stays_the_validation_maximum_when_the_test_runs(mocks, folder
     assert _run(spec, folder) == TrialOutcome("complete", 0.45, None, None, {**TEN_SECONDS_EACH, "test_seconds": 10})
 
 
-def test_the_metric_comes_from_the_resolved_stage2_config(mocks, folder):
+def test_the_metric_comes_from_the_resolved_recommender_config(mocks, folder):
     # selected on recall@10 by the spec; ndcg@10 peaks elsewhere, so reading it would give 0.35:
     # | step | recall@10 | ndcg@10 | best_recall@10 |
     # |------|-----------|---------|----------------|
     # | 68   | 0.6       | 0.30    | 0.6            |
     # | 136  | 0.5       | 0.35    | 0.6            |
-    mocks["stage2"].side_effect = _stage2_sending([_record(68, 0.30, 0.30, recall=0.6, best_recall=0.6),
+    mocks["recommender"].side_effect = _recommender_sending([_record(68, 0.30, 0.30, recall=0.6, best_recall=0.6),
                                                    _record(136, 0.35, 0.35, recall=0.5, best_recall=0.6)])
-    spec = TrialSpec.from_json({**SPEC.to_json(), "stage2_overrides": {"seq2seq.checkpoint_metric.metric": "recall"}})
+    overrides = {"seq2seq.checkpoint_metric.metric": "recall"}
+    spec = TrialSpec.from_json({**SPEC.to_json(), "recommender_overrides": overrides})
     study = optuna.create_study(direction="maximize")
 
     outcome = _run(spec, folder, study.ask())
@@ -221,9 +224,9 @@ def test_the_optuna_trial_gets_the_best_so_far_curve(mocks, folder):
 
 # the clock reads 10 s per finished stage; the failing stage and those after it have no time
 @pytest.mark.parametrize("stage, timings", [
-    ("stage1", {"stage1_seconds": None, "stage2_seconds": None, "test_seconds": None}),
-    ("stage2", {"stage1_seconds": 10, "stage2_seconds": None, "test_seconds": None}),
-    ("test", {"stage1_seconds": 10, "stage2_seconds": 10, "test_seconds": None}),
+    ("quantizer", {"quantizer_seconds": None, "recommender_seconds": None, "test_seconds": None}),
+    ("recommender", {"quantizer_seconds": 10, "recommender_seconds": None, "test_seconds": None}),
+    ("test", {"quantizer_seconds": 10, "recommender_seconds": 10, "test_seconds": None}),
 ])
 def test_a_raising_stage_is_a_crash(mocks, folder, stage, timings):
     mocks[stage].side_effect = RuntimeError("boom")
@@ -233,37 +236,37 @@ def test_a_raising_stage_is_a_crash(mocks, folder, stage, timings):
 
 
 def test_a_crash_is_recorded_in_trial_json(mocks, folder):
-    mocks["stage1"].side_effect = RuntimeError("boom")
+    mocks["quantizer"].side_effect = RuntimeError("boom")
 
     _run(SPEC, folder)
 
     assert _trial_json(folder)["outcome"] == {"status": "failed", "value": None, "failure_class": "crash",
                                               "error": "RuntimeError: boom",
-                                              "timings": {"stage1_seconds": None, "stage2_seconds": None,
+                                              "timings": {"quantizer_seconds": None, "recommender_seconds": None,
                                                           "test_seconds": None}}
 
 
 def test_a_collision_overflow_is_infeasible(mocks, folder):
     message = "Collision overflow! Max depth 2 exceeds limit 2."
-    mocks["stage1"].side_effect = CollisionOverflowError(message)
+    mocks["quantizer"].side_effect = CollisionOverflowError(message)
 
     assert _run(SPEC, folder) == TrialOutcome("failed", None, "infeasible", f"CollisionOverflowError: {message}",
-                                              {"stage1_seconds": None, "stage2_seconds": None, "test_seconds": None})
+                                              NO_TIMINGS)
 
 
 def test_the_failure_class_comes_from_the_type_not_the_message(mocks, folder):
     # same message, plain ValueError: a crash
-    mocks["stage1"].side_effect = ValueError("Collision overflow! Max depth 2 exceeds limit 2.")
+    mocks["quantizer"].side_effect = ValueError("Collision overflow! Max depth 2 exceeds limit 2.")
 
     assert _run(SPEC, folder) == TrialOutcome("failed", None, "crash",
                                               "ValueError: Collision overflow! Max depth 2 exceeds limit 2.",
-                                              {"stage1_seconds": None, "stage2_seconds": None, "test_seconds": None})
+                                              NO_TIMINGS)
 
 
-def test_stage2_without_records_is_a_crash(mocks, folder):
-    mocks["stage2"].side_effect = _stage2_sending([])
+def test_recommender_without_records_is_a_crash(mocks, folder):
+    mocks["recommender"].side_effect = _recommender_sending([])
 
-    # Stage 2 itself returns; the missing curve fails afterwards, so its time is recorded
+    # the recommender stage itself returns; the missing curve fails afterwards, so its time is recorded
     assert _run(SPEC, folder) == TrialOutcome("failed", None, "crash", "ValueError: no validation records",
                                               TEN_SECONDS_EACH)
 
@@ -271,7 +274,7 @@ def test_stage2_without_records_is_a_crash(mocks, folder):
 @pytest.mark.parametrize("interrupt", [KeyboardInterrupt, SystemExit])
 def test_an_interrupt_propagates_without_an_outcome(mocks, folder, interrupt):
     handlers_before = list(logging.getLogger().handlers)
-    mocks["stage2"].side_effect = interrupt()
+    mocks["recommender"].side_effect = interrupt()
 
     with pytest.raises(interrupt):
         _run(SPEC, folder)
@@ -283,10 +286,10 @@ def test_an_interrupt_propagates_without_an_outcome(mocks, folder, interrupt):
 
 def test_stage_log_lines_and_a_crash_traceback_go_to_trial_log(mocks, folder):
     # WARNING, so the line passes whatever level the root logger has in the test run
-    def stage1(*args):
+    def quantizer(*args):
         logging.getLogger("train_quantizer").warning("epoch 1 done")
         raise RuntimeError("boom")
-    mocks["stage1"].side_effect = stage1
+    mocks["quantizer"].side_effect = quantizer
 
     _run(SPEC, folder)
 
@@ -301,18 +304,18 @@ def test_stage_log_lines_and_a_crash_traceback_go_to_trial_log(mocks, folder):
 def test_the_log_handler_is_removed_after_the_trial(mocks, folder, fails):
     handlers_before = list(logging.getLogger().handlers)
     if fails:
-        mocks["stage1"].side_effect = RuntimeError("boom")
+        mocks["quantizer"].side_effect = RuntimeError("boom")
 
     _run(SPEC, folder)
 
     assert logging.getLogger().handlers == handlers_before
 
 
-@pytest.mark.parametrize("stage2_raises", [None, RuntimeError("boom"), KeyboardInterrupt()],
+@pytest.mark.parametrize("recommender_raises", [None, RuntimeError("boom"), KeyboardInterrupt()],
                          ids=["complete", "crash", "interrupt"])
-def test_the_clean_up_runs_once_after_every_trial(mocks, folder, stage2_raises):
-    if stage2_raises is not None:
-        mocks["stage2"].side_effect = stage2_raises
+def test_the_clean_up_runs_once_after_every_trial(mocks, folder, recommender_raises):
+    if recommender_raises is not None:
+        mocks["recommender"].side_effect = recommender_raises
 
     try:
         _run(SPEC, folder)

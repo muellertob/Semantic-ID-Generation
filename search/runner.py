@@ -36,7 +36,8 @@ class TrialOutcome:
     value: float | None        # the objective value; None unless complete
     failure_class: str | None  # None | "infeasible" | "crash"
     error: str | None          # "<exception type>: <message>", or None
-    timings: dict              # stage1_seconds, stage2_seconds, test_seconds; None for a stage that did not finish
+    timings: dict              # quantizer_seconds, recommender_seconds, test_seconds; None for a stage that did
+                               # not finish
 
 
 def run_trial(spec: TrialSpec, folder: str | Path, trial: optuna.Trial | None, *, compile: bool,
@@ -54,7 +55,7 @@ def run_trial(spec: TrialSpec, folder: str | Path, trial: optuna.Trial | None, *
     handler = logging.FileHandler(folder / "trial.log")
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
     logging.getLogger().addHandler(handler)
-    timings = {"stage1_seconds": None, "stage2_seconds": None, "test_seconds": None}
+    timings = {"quantizer_seconds": None, "recommender_seconds": None, "test_seconds": None}
     try:
         with Heartbeat(folder / "heartbeat"):
             try:
@@ -76,17 +77,17 @@ def run_trial(spec: TrialSpec, folder: str | Path, trial: optuna.Trial | None, *
 def _run_stages(spec: TrialSpec, folder: Path, trial, compile: bool, timings: dict) -> float:
     if spec.semids_from is None:
         start = time.monotonic()
-        stages.stage1(spec, folder, compile)
-        timings["stage1_seconds"] = time.monotonic() - start
+        stages.quantizer(spec, folder, compile)
+        timings["quantizer_seconds"] = time.monotonic() - start
 
-    config = stages.stage2_config(spec, folder, compile)
+    config = stages.recommender_config(spec, folder, compile)
     name, k = train_seq2seq.get_checkpoint_metric(OmegaConf.load(config))
     metric = f"{name}@{k}"
     log = folder / "validation.jsonl"
     reporter = ValidationReporter(log, metric, trial)
     start = time.monotonic()
-    result = stages.stage2(spec, folder, config, reporter.on_validation)
-    timings["stage2_seconds"] = time.monotonic() - start
+    result = stages.recommender(spec, folder, config, reporter.on_validation)
+    timings["recommender_seconds"] = time.monotonic() - start
     value = objective_value(read_records(log), metric)
 
     if spec.run_test:

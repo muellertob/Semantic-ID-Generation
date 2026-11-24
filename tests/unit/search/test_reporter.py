@@ -69,7 +69,7 @@ def test_a_second_reporter_on_the_same_path_is_rejected_before_any_validation(tm
 
 
 def test_a_run_without_validations_leaves_an_empty_log(tmp_path):
-    # e.g. Stage 2 crashes before its first validation
+    # e.g. the recommender crashes before its first validation
     path = tmp_path / "validation.jsonl"
     ValidationReporter(path, "ndcg@10")
 

@@ -34,7 +34,7 @@ def _load(path):
 
 def test_resolved_config_is_the_base_with_the_overrides(base, tmp_path):
     # dest lies in a folder that does not exist yet, as configs/ in a fresh trial folder
-    dest = tmp_path / "trial" / "configs" / "stage1.yaml"
+    dest = tmp_path / "trial" / "configs" / "quantizer.yaml"
     write_resolved_config(base, {"model.beta": 0.25, "model.levels": [4, 4, 4, 4]}, dest)
     assert _load(dest) == {"model": {"beta": 0.25, "levels": [4, 4, 4, 4]}, "train": {"lr": 0.01}}
 

@@ -20,22 +20,22 @@ PHASES = ("A", "B", "confirm", "final")
 class TrialSpec:
     """
     dataset, quantizer: names the stage and space modules resolve (not checked here).
-    phase: "A" (Stage-1 search), "B" (Stage-2 search), "confirm" or "final" (reruns).
-    stage1_overrides, stage2_overrides: dotted config keys -> values; Stage 1 must have none when
-        semids_from is set, because Stage 1 does not run then.
-    stage1_seed, stage2_seed: seeds of the two stages.
-    semids_from: trial folder whose semids.pt Stage 2 uses, or None to run Stage 1.
-    max_steps: Stage-2 step budget.
+    phase: "A" (quantizer search), "B" (recommender search), "confirm" or "final" (reruns).
+    quantizer_overrides, recommender_overrides: dotted config keys -> values; the quantizer's must be empty when
+        semids_from is set, because the quantizer stage does not run then.
+    quantizer_seed, recommender_seed: seeds of the two stages.
+    semids_from: trial folder whose semids.pt the recommender uses, or None to fit the quantizer.
+    max_steps: recommender step budget.
     run_test: run the test set after training (reruns only).
     source: provenance, e.g. {"study": ..., "trial_number": ..., "retry_of": ...}; keys are free.
     """
     dataset: str
     quantizer: str
     phase: str
-    stage1_overrides: dict[str, Any]
-    stage2_overrides: dict[str, Any]
-    stage1_seed: int
-    stage2_seed: int
+    quantizer_overrides: dict[str, Any]
+    recommender_overrides: dict[str, Any]
+    quantizer_seed: int
+    recommender_seed: int
     semids_from: str | None
     max_steps: int
     run_test: bool
@@ -46,10 +46,11 @@ class TrialSpec:
             _check_type(name, getattr(self, name), _accepted_types(hint))
         if self.phase not in PHASES:
             raise ValueError(f"phase must be one of {list(PHASES)}, got {self.phase!r}")
-        for name in ("stage1_overrides", "stage2_overrides", "source"):
+        for name in ("quantizer_overrides", "recommender_overrides", "source"):
             _check_json_safe(name, getattr(self, name))
-        if self.semids_from is not None and self.stage1_overrides:
-            raise ValueError("stage1_overrides must be empty when semids_from is set (Stage 1 does not run)")
+        if self.semids_from is not None and self.quantizer_overrides:
+            raise ValueError("quantizer_overrides must be empty when semids_from is set "
+                             "(the quantizer stage does not run)")
 
     def to_json(self) -> dict:
         """All fields as a plain dict (a deep copy, so changing it leaves the spec alone)."""

@@ -10,20 +10,21 @@ import pytest
 from search.spec import TrialSpec
 
 # REF: a Phase A trial; both stages run, the test set is not touched.
-# REF_B: a Phase B retry of trial 3; Stage 2 only, on the SIDs of Phase A trial 7, so Stage 1 has no overrides.
+# REF_B: a Phase B retry of trial 3; recommender only, on the SIDs of Phase A trial 7, so the quantizer has no
+# overrides.
 #
-# | spec  | phase | stage1_overrides                                | semids_from                       | run_test | source.retry_of |
-# |-------|-------|-------------------------------------------------|-----------------------------------|----------|-----------------|
-# | REF   | A     | {"model.codebook_size": 256, "train.lr": 0.001} | None                              | False    | None            |
-# | REF_B | B     | {}                                              | "/search/toys/A-rqvae/trial_0007" | True     | 3               |
+# | spec  | quantizer_overrides                             | semids_from                       | run_test | retry_of |
+# |-------|-------------------------------------------------|-----------------------------------|----------|----------|
+# | REF   | {"model.codebook_size": 256, "train.lr": 0.001} | None                              | False    | None     |
+# | REF_B | {}                                              | "/search/toys/A-rqvae/trial_0007" | True     | 3        |
 REF = TrialSpec(
     dataset="toys",
     quantizer="rqvae",
     phase="A",
-    stage1_overrides={"model.codebook_size": 256, "train.lr": 0.001},
-    stage2_overrides={"training.learning_rate": 0.0005, "model.num_layers": 4},
-    stage1_seed=42,
-    stage2_seed=42,
+    quantizer_overrides={"model.codebook_size": 256, "train.lr": 0.001},
+    recommender_overrides={"training.learning_rate": 0.0005, "model.num_layers": 4},
+    quantizer_seed=42,
+    recommender_seed=42,
     semids_from=None,
     max_steps=100_000,
     run_test=False,
@@ -32,7 +33,7 @@ REF = TrialSpec(
 REF_B = dataclasses.replace(
     REF,
     phase="B",
-    stage1_overrides={},
+    quantizer_overrides={},
     semids_from="/search/toys/A-rqvae/trial_0007",
     run_test=True,
     source={"study": "toys.B.rqvae", "trial_number": 12, "retry_of": 3},
@@ -43,10 +44,10 @@ REF_JSON = {
     "dataset": "toys",
     "quantizer": "rqvae",
     "phase": "A",
-    "stage1_overrides": {"model.codebook_size": 256, "train.lr": 0.001},
-    "stage2_overrides": {"training.learning_rate": 0.0005, "model.num_layers": 4},
-    "stage1_seed": 42,
-    "stage2_seed": 42,
+    "quantizer_overrides": {"model.codebook_size": 256, "train.lr": 0.001},
+    "recommender_overrides": {"training.learning_rate": 0.0005, "model.num_layers": 4},
+    "quantizer_seed": 42,
+    "recommender_seed": 42,
     "semids_from": None,
     "max_steps": 100000,
     "run_test": False,
@@ -66,10 +67,10 @@ def test_to_json_writes_exactly_the_eleven_fields():
 
 def test_from_json_rejects_an_unknown_key():
     # a typo in a hand-edited job file must not fall back silently to the old seed
-    data = {**REF_JSON, "stage2_seeds": 7}
+    data = {**REF_JSON, "recommender_seeds": 7}
     with pytest.raises(ValueError) as excinfo:
         TrialSpec.from_json(data)
-    assert str(excinfo.value) == "TrialSpec JSON has unknown keys: ['stage2_seeds']"
+    assert str(excinfo.value) == "TrialSpec JSON has unknown keys: ['recommender_seeds']"
 
 
 def test_from_json_rejects_a_missing_key():
@@ -90,7 +91,7 @@ def test_phase_outside_the_four_phases_is_rejected():
     "field, value, message",
     [
         # a string seed would land unchecked in the stage config
-        ("stage1_seed", "42", "stage1_seed must be int, got str"),
+        ("quantizer_seed", "42", "quantizer_seed must be int, got str"),
         # bool is an int subclass in Python, but True is not a step budget
         ("max_steps", True, "max_steps must be int, got bool"),
         # the string "false" is truthy and would run the test set
@@ -106,16 +107,16 @@ def test_field_of_the_wrong_type_is_rejected(field, value, message):
 def test_overrides_that_change_in_json_are_rejected():
     # a tuple comes back from JSON as a list, so a rerun's spec would differ from the trial's
     with pytest.raises(ValueError) as excinfo:
-        dataclasses.replace(REF, stage2_overrides={"model.layers": (4, 4)})
+        dataclasses.replace(REF, recommender_overrides={"model.layers": (4, 4)})
     assert str(excinfo.value) == (
-        "stage2_overrides must survive a JSON round trip unchanged: {'model.layers': (4, 4)}"
+        "recommender_overrides must survive a JSON round trip unchanged: {'model.layers': (4, 4)}"
     )
 
 
-def test_stage1_overrides_with_semids_from_are_rejected():
-    # Stage 1 does not run on reused SIDs, so trial.json would claim a config that never trained
+def test_quantizer_overrides_with_semids_from_are_rejected():
+    # the quantizer stage does not run on reused SIDs, so trial.json would claim a config that never trained
     with pytest.raises(ValueError) as excinfo:
-        dataclasses.replace(REF_B, stage1_overrides={"train.lr": 0.001})
+        dataclasses.replace(REF_B, quantizer_overrides={"train.lr": 0.001})
     assert str(excinfo.value) == (
-        "stage1_overrides must be empty when semids_from is set (Stage 1 does not run)"
+        "quantizer_overrides must be empty when semids_from is set (the quantizer stage does not run)"
     )
