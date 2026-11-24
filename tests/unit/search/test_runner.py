@@ -254,6 +254,20 @@ def test_a_collision_overflow_is_infeasible(mocks, folder):
                                               NO_TIMINGS)
 
 
+def test_a_trial_the_reaper_ended_is_reaped_not_a_crash(mocks, folder):
+    # the reaper told FAIL and enqueued a retry; report() then raises, which stops the training, and the worker
+    # must not add a second retry
+    study = optuna.create_study(direction="maximize")
+    trial = study.ask()
+    study.tell(trial, state=optuna.trial.TrialState.FAIL)
+
+    # report() raises inside the recommender stage: the quantizer took its 10 s, the recommender has no time, the
+    # test never runs
+    assert _run(SPEC, folder, trial) == TrialOutcome(
+        "failed", None, "reaped", "UpdateFinishedTrialError: Trial#0 has already finished and can not be updated.",
+        {"quantizer_seconds": 10, "recommender_seconds": None, "test_seconds": None})
+
+
 def test_the_failure_class_comes_from_the_type_not_the_message(mocks, folder):
     # same message, plain ValueError: a crash
     mocks["quantizer"].side_effect = ValueError("Collision overflow! Max depth 2 exceeds limit 2.")

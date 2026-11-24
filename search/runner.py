@@ -1,12 +1,12 @@
 """
 One run of the search driver, a search trial or a rerun, in its own folder.
 
-trial.json is written first ({"spec", "context"}), so a folder always says what ran; the outcome is added when
-the run ends, so "has an outcome" means done. A stage's exception is classified, not raised: a collision overflow
-is "infeasible" (deterministic: no retry, counts toward the budget), anything else is a "crash". KeyboardInterrupt
-and SystemExit propagate: a killed worker is the reaper's case. A heartbeat file in the folder shows that the run
-lives, from trial.json until the outcome. Every run ends with the same clean-up, because a worker runs many trials
-in one process.
+trial.json is written first, so a folder always says what ran; the outcome is added at the end ("has an outcome"
+means done). A heartbeat shows that the run lives. A stage's exception becomes a failure class instead of being raised:
+- "infeasible": a collision overflow (deterministic: no retry, counts toward the budget);
+- "reaped": the reaper already ended the Optuna trial and enqueued its retry;
+- "crash": anything else.
+Every run ends with the same clean-up, because a worker runs many trials in one process.
 """
 import dataclasses
 import gc
@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 
 import optuna
+from optuna.exceptions import UpdateFinishedTrialError
 import torch
 import wandb
 from omegaconf import OmegaConf
@@ -34,7 +35,7 @@ logger = logging.getLogger(__name__)
 class TrialOutcome:
     status: str                # "complete" | "failed"
     value: float | None        # the objective value; None unless complete
-    failure_class: str | None  # None | "infeasible" | "crash"
+    failure_class: str | None  # None | "infeasible" | "reaped" | "crash"
     error: str | None          # "<exception type>: <message>", or None
     timings: dict              # quantizer_seconds, recommender_seconds, test_seconds; None for a stage that did
                                # not finish
@@ -63,7 +64,7 @@ def run_trial(spec: TrialSpec, folder: str | Path, trial: optuna.Trial | None, *
                 outcome = TrialOutcome("complete", value, None, None, dict(timings))
             except Exception as error:
                 logger.exception("trial failed")
-                failure_class = "infeasible" if isinstance(error, CollisionOverflowError) else "crash"
+                failure_class = _failure_class(error)
                 outcome = TrialOutcome("failed", None, failure_class, f"{type(error).__name__}: {error}",
                                        dict(timings))
             replace_json(trial_json, {**head, "outcome": dataclasses.asdict(outcome)})
@@ -72,6 +73,14 @@ def run_trial(spec: TrialSpec, folder: str | Path, trial: optuna.Trial | None, *
         logging.getLogger().removeHandler(handler)
         handler.close()
         _clean_up()
+
+
+def _failure_class(error: Exception) -> str:
+    if isinstance(error, CollisionOverflowError):
+        return "infeasible"
+    if isinstance(error, UpdateFinishedTrialError):  # raised by trial.report after the reaper's FAIL
+        return "reaped"
+    return "crash"
 
 
 def _run_stages(spec: TrialSpec, folder: Path, trial, compile: bool, timings: dict) -> float:
