@@ -157,10 +157,19 @@ def train(model, data, optimizer, num_epochs, device, config):
     epoch_progress = tqdm(range(num_epochs), total=num_epochs, desc="Training Loop")
     results = []
 
+    batch_size = config.data.batch_size
+    if batch_size > len(data):
+        raise ValueError(f"data.batch_size is {batch_size} but there are only {len(data)} items to train on: "
+                         f"with full batches only, an epoch would have no training step")
+
+    # Full batches only: the input BatchNorm raises on a batch of one item, and on a few items its statistics
+    # degenerate and then enter the running statistics that generate the Semantic IDs. The items left out
+    # change every epoch because of the shuffle.
     train_loader = DataLoader(
         data,
-        batch_size=config.data.batch_size,
+        batch_size=batch_size,
         shuffle=True,
+        drop_last=True,
         generator=get_seeded_generator(config.general.get('seed', 42)),
         worker_init_fn=seed_worker,
         pin_memory=(device.type == 'cuda')

@@ -1,11 +1,15 @@
 """
-Integration tests for the quantizer training script (train_quantizer.py): model construction from the config.
+Integration tests for the quantizer training script (train_quantizer.py): model construction from the config and
+the batches of the training loop.
 """
+from unittest.mock import patch
+
 import pytest
+import torch
 from omegaconf import OmegaConf
 
 from modules.fsq.quantization import FixedScaleResidualFSQ
-from train_quantizer import create_model
+from train_quantizer import create_model, train
 
 
 def _rqvae_config(**model):
@@ -79,3 +83,38 @@ def test_create_model_rejects_quantizer_dropout_for_another_quantizer_type():
         create_model(config, input_dim=8)
 
     assert str(error.value) == "model.quantizer_dropout is only implemented for quantizer_type 'rfsq_fixed', got 'rfsq'"
+
+
+def _train_one_epoch(n_items, batch_size):
+    """Trains one epoch on n_items random items with the input BatchNorm on; returns the mock that wraps the forward pass."""
+    model = create_model(_rfsq_fixed_config(normalize_inputs=True), input_dim=8)
+    config = OmegaConf.create({"data": {"batch_size": batch_size}, "general": {"seed": 42, "use_wandb": False},
+                               "model": {"quantizer_type": "rfsq_fixed"}, "train": {}})
+    with patch.object(model, "forward", wraps=model.forward) as forward:
+        train(model, torch.randn(n_items, 8), torch.optim.Adam(model.parameters()), 1, torch.device("cpu"), config)
+    return forward
+
+
+# items = full batches + left over; the left-over items are not trained on
+#   5 = 2 + 2 + 1: the Onion case (one item left, the input BatchNorm raises)
+#   5 = 3 + 2:     two items left, whose BatchNorm statistics degenerate
+#   4 = 2 + 2:     nothing left
+@pytest.mark.parametrize("n_items, batch_size, batch_sizes", [(5, 2, [2, 2]), (5, 3, [3]), (4, 2, [2, 2])])
+def test_train_uses_full_batches_only(n_items, batch_size, batch_sizes):
+    forward = _train_one_epoch(n_items, batch_size)
+    assert [call.args[0].shape[0] for call in forward.call_args_list] == batch_sizes
+
+
+def test_train_rejects_a_batch_size_larger_than_the_data():
+    # with full batches only, the epoch would have no step and the Semantic IDs would come from an untrained model
+    with pytest.raises(ValueError) as error:
+        _train_one_epoch(n_items=2, batch_size=3)
+    assert str(error.value) == ("data.batch_size is 3 but there are only 2 items to train on: "
+                                "with full batches only, an epoch would have no training step")
+
+
+@pytest.mark.parametrize("path", ["config/fsq/amazon_toy_gts.yaml", "config/fsq/amazon_toy_rfsq_fixed_gts.yaml",
+                                  "config/fsq/onion_gts.yaml", "config/fsq/onion_rfsq_fixed_gts.yaml"])
+def test_shipped_fsq_configs_train_with_the_batch_size_of_rq_vae(path):
+    # FSQ and residual FSQ use the 1024 of RQ-VAE on both datasets (the earlier 256 is no longer the setting)
+    assert OmegaConf.load(path).data.batch_size == 1024

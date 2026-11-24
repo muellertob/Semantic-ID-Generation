@@ -3,7 +3,7 @@
 # data loader configuration
 data:
   dataset: "music4all_onion"
-  batch_size: 256
+  batch_size: 1024 # the same as for RQ-VAE
   input_normalization: "none" # none | center | center_l2 | std_l2
   split: "train"
   split_protocol: "gts" # global temporal split

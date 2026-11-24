@@ -2,7 +2,7 @@
 # data loader configuration
 data:
   dataset: "amazon"
-  batch_size: 256
+  batch_size: 1024 # the same as for RQ-VAE
   input_normalization: "none" # none | center | center_l2 | std_l2
   category: "toys"
   split: "train"
