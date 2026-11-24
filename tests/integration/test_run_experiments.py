@@ -235,6 +235,12 @@ def test_onion_rqvae_config_differs_from_toys_only_in_the_dataset_and_wandb_proj
     assert config_diff("config/rq-vae/amazon_toy_tiger_gts.yaml", "config/rq-vae/onion_tiger_gts.yaml") == QUANTIZER_DIFF
 
 
+def test_onion_rfsq_fixed_config_differs_from_toys_only_in_the_dataset_and_wandb_project():
+    # same reason as for FSQ; the Stage-1 length is set by the experiment entry, not by the file
+    assert config_diff("config/fsq/amazon_toy_rfsq_fixed_gts.yaml",
+                       "config/fsq/onion_rfsq_fixed_gts.yaml") == QUANTIZER_DIFF
+
+
 def test_onion_recommender_config_differs_from_toys_only_in_dataset_budget_and_wandb_projects():
     # 100k steps at 51 steps per epoch, first evaluation after 10,200 steps; the quantizer project links the parent run
     assert config_diff("config/recommender/amazon_toy_grid_gts.yaml",
@@ -250,7 +256,8 @@ def test_onion_fsq_recommender_config_differs_from_toys_in_the_same_keys():
 def test_onion_experiments_are_the_toys_reference_variants_on_the_onion_configs():
     # the Stage-1 defaults live in one place, the Toys variants
     toys = {e["name"]: e for e in GTS_EXPERIMENTS}
-    assert [e["name"] for e in ONION_GTS_EXPERIMENTS] == ["RQ_VAE_cal_b025_lr001_20k", "FSQ_20k", "RQ_KMeans"]
+    assert [e["name"] for e in ONION_GTS_EXPERIMENTS] == ["RQ_VAE_cal_b025_lr001_20k", "FSQ_20k", "RQ_KMeans",
+                                                          "RFSQ_Fixed_866_20k"]
     assert ONION_GTS_EXPERIMENTS == [
         {**toys["RQ_VAE_cal_b025_lr001_20k"], "quant_config": "config/rq-vae/onion_tiger_gts.yaml",
          "recommender_config": "config/recommender/onion_grid_gts.yaml"},
@@ -258,6 +265,11 @@ def test_onion_experiments_are_the_toys_reference_variants_on_the_onion_configs(
          "recommender_config": "config/recommender/onion_grid_fsq_gts.yaml"},
         {**toys["RQ_KMeans"], "quant_config": "config/rq-kmeans/onion_rqkmeans_gts.yaml",
          "recommender_config": "config/recommender/onion_grid_gts.yaml"},
+        # written out in full: the Toys entry of this grid has 2000 Stage-1 epochs, Onion gets the 20k of the others
+        {"name": "RFSQ_Fixed_866_20k", "quant_config": "config/fsq/onion_rfsq_fixed_gts.yaml",
+         "quant_overrides": {"train.num_epochs": 20000},
+         "recommender_config": "config/recommender/onion_grid_fsq_gts.yaml",
+         "codebook_size": toys["RFSQ_Fixed_866"]["codebook_size"]},
     ]
 
 
@@ -269,6 +281,15 @@ def test_written_onion_quantizer_config_differs_from_toys_only_in_the_dataset_an
     toys = written_config(variant)
     onion = written_config(variant, experiments=ONION_GTS_EXPERIMENTS)
     assert flat_diff(toys, onion) == expected_diff
+
+
+def test_written_onion_rfsq_quantizer_config_has_20k_epochs_and_otherwise_the_toys_setup(written_config):
+    # besides dataset and W&B project only the Stage-1 length differs; the two output paths carry the new variant name
+    toys = written_config("RFSQ_Fixed_866")
+    onion = written_config("RFSQ_Fixed_866_20k", experiments=ONION_GTS_EXPERIMENTS)
+    renamed = {key: (toys[key], toys[key].replace("rfsq_fixed_866", "rfsq_fixed_866_20k"))
+               for key in ("general.meta_json", "general.model_path")}
+    assert flat_diff(toys, onion) == {**QUANTIZER_DIFF, "train.num_epochs": (2000, 20000), **renamed}
 
 
 def test_select_experiments_returns_the_onion_list_for_the_onion_dataset():
@@ -291,6 +312,12 @@ def test_select_experiments_rejects_the_onion_dataset_under_leave_one_out():
 def test_select_experiments_filters_variants_case_insensitively_in_the_given_order():
     by_name = {e["name"]: e for e in ONION_GTS_EXPERIMENTS}
     assert select_experiments("music4all_onion", "gts", "rq_kmeans,FSQ_20k") == [by_name["RQ_KMeans"], by_name["FSQ_20k"]]
+
+
+def test_select_experiments_selects_the_onion_rfsq_variant_by_name():
+    # the new name reaches the command line
+    by_name = {e["name"]: e for e in ONION_GTS_EXPERIMENTS}
+    assert select_experiments("music4all_onion", "gts", "rfsq_fixed_866_20k") == [by_name["RFSQ_Fixed_866_20k"]]
 
 
 def test_select_experiments_rejects_a_toys_only_variant_for_the_onion_dataset():

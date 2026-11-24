@@ -1,0 +1,41 @@
+# Music4All-Onion variant of amazon_toy_rfsq_fixed_gts.yaml (same settings, other data and W&B project); the quantizer fits
+# on the stage-1 items only. The current Stage-1 defaults are set by the experiment entries in run_experiments.py.
+# data loader configuration
+data:
+  dataset: "music4all_onion"
+  batch_size: 256
+  input_normalization: "none" # none | center | center_l2 | std_l2
+  split: "train"
+  split_protocol: "gts" # global temporal split
+  gts_q_test: 0.9
+  gts_q_val: 0.9
+
+# model configuration (residual FSQ in the latent: no projections, no quantizer parameters)
+model:
+  quantizer_type: "rfsq_fixed"
+  input_dimension: 768
+  hidden_dimensions: [512, 256, 128]
+  latent_dimension: 3             # must equal the number of entries in level_list
+  codebook_layers: 3              # Number of residual quantizer stages
+  level_list: [8, 6, 6]           # Possible values per channel at every stage
+  loss_type: l1
+  quantizer_dropout: 0.0          # probability that an item is trained with only its first n levels (n uniform)
+  normalize_inputs: True          # VAE model-internal input normalization layer (BatchNorm + L2 Norm)
+
+# training configuration (FSQ)
+train:
+  optimizer: "adam"
+  learning_rate: 1e-3
+  weight_decay: 0
+  num_epochs: 2000
+  use_lr_scheduler: False
+
+# additional configuration
+general:
+  seed: 10
+  sid_type: "R-FSQ_Fixed"
+  use_wandb: True
+  wandb_log_artifacts: False
+  wandb_project_quantizer: "mt-onion-quantizer"
+  wandb_entity: "tobias-mueller99-johannes-kepler-universit-t-linz"
+  save_model: True

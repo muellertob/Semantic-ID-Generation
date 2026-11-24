@@ -630,6 +630,15 @@ ONION_GTS_EXPERIMENTS = [
                   "config/recommender/onion_grid_gts.yaml"),
     onion_variant("FSQ_20k", "config/fsq/onion_gts.yaml", "config/recommender/onion_grid_fsq_gts.yaml"),
     onion_variant("RQ_KMeans", "config/rq-kmeans/onion_rqkmeans_gts.yaml", "config/recommender/onion_grid_gts.yaml"),
+    # Provisional residual FSQ (grid [8,6,6] at every level, no quantizer dropout) until the RFSQ setup is settled.
+    # Stage 1 runs 20k epochs like every neural quantizer here; the Toys variant RFSQ_Fixed_866 has 2000.
+    {
+        "name": "RFSQ_Fixed_866_20k",
+        "quant_config": "config/fsq/onion_rfsq_fixed_gts.yaml",
+        "quant_overrides": {"train.num_epochs": 20000},
+        "recommender_config": "config/recommender/onion_grid_fsq_gts.yaml",
+        "codebook_size": 288,
+    },
 ]
 
 DATASETS = ("toys", "music4all_onion")
