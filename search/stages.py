@@ -106,26 +106,30 @@ def semids_path(spec: TrialSpec, folder: str | Path) -> Path:
     return Path(folder) / "semids.pt"
 
 
-def stage2(spec: TrialSpec, folder: str | Path, compile: bool, on_validation) -> Stage2Result:
-    """
-    Train the recommender of `spec` on its SIDs; `on_validation` is passed through to train_seq2seq.run_training.
-    The best checkpoint is <folder>/checkpoints/stage2_best.pt, as named in the train meta.
-    """
+def stage2_config(spec: TrialSpec, folder: str | Path, compile: bool) -> Path:
+    """Write the resolved Stage-2 config of `spec` to <folder>/configs/stage2.yaml and return its path."""
     _reject_driver_keys("stage2_overrides", spec.stage2_overrides)
     folder = Path(folder)
     _, base = base_configs(spec.dataset, spec.quantizer)
-    train_meta = folder / "meta" / "train.json"
     driver = {
         "general.seed": spec.stage2_seed,
-        "general.meta_json": str(train_meta),
+        "general.meta_json": str(_train_meta(folder)),
         "general.run_name": "stage2",
         "general.recommender_model_dir": str(folder / "checkpoints"),
         "general.wandb_dir": str(folder / "wandb"),
         "general.compile": compile,
     }
-    config = _write(base, spec.stage2_overrides, driver, folder / "configs" / "stage2.yaml")
+    return _write(base, spec.stage2_overrides, driver, folder / "configs" / "stage2.yaml")
+
+
+def stage2(spec: TrialSpec, folder: str | Path, config: str | Path, on_validation) -> Stage2Result:
+    """
+    Train the recommender with `config` (from stage2_config) on the SIDs of `spec`; `on_validation` is passed
+    through to train_seq2seq.run_training. The best checkpoint is <folder>/checkpoints/stage2_best.pt, as named in
+    the train meta.
+    """
     train_seq2seq.run_training(str(config), str(semids_path(spec, folder)), on_validation=on_validation)
-    meta = _read_meta(train_meta)
+    meta = _read_meta(_train_meta(Path(folder)))
     return Stage2Result(Path(meta["best_model_path"]), meta)
 
 
@@ -142,6 +146,10 @@ def test(spec: TrialSpec, folder: str | Path, best_checkpoint: str | Path) -> di
 
 def _write(base: Path, overrides: dict, driver: dict, dest: Path) -> Path:
     return write_resolved_config(base, {**overrides, **driver}, dest, allow_new=DRIVER_KEYS)
+
+
+def _train_meta(folder: Path) -> Path:
+    return folder / "meta" / "train.json"
 
 
 def _reject_driver_keys(name: str, overrides: dict) -> None:

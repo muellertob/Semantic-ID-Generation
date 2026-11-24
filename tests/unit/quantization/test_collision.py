@@ -8,7 +8,7 @@ Covers:
 """
 import pytest
 import torch
-from generate_semids import resolve_collisions
+from generate_semids import CollisionOverflowError, resolve_collisions
 
 
 class TestResolveCollisions:
@@ -79,3 +79,12 @@ class TestResolveCollisions:
         sids = torch.full((n + 1, 3), 7, dtype=torch.long)
         with pytest.raises(ValueError, match="Collision overflow"):
             resolve_collisions(sids, max_collisions=n)
+
+    def test_overflow_raises_the_type_the_search_driver_counts_as_infeasible(self):
+        """The search driver classifies a trial by this type, so a deterministic overflow is not retried."""
+        sids = torch.full((10, 3), 99, dtype=torch.long)
+        with pytest.raises(CollisionOverflowError) as error:
+            resolve_collisions(sids, max_collisions=5)
+        # ten identical items get collision tokens 0..9; 9 is not below the limit 5
+        assert (type(error.value), str(error.value)) == (CollisionOverflowError,
+                                                         "Collision overflow! Max depth 9 exceeds limit 5.")

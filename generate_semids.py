@@ -11,6 +11,11 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+class CollisionOverflowError(ValueError):
+    """More items share one SID than the collision level has values: the configuration cannot give unique IDs."""
+
+
 def load_trained_model(model_path, config, device, input_dim):
     """Load a trained quantizer model (FSQ or RQ-VAE)."""
     quantizer_type = getattr(config.model, 'quantizer_type', 'rqvae')
@@ -153,7 +158,7 @@ def resolve_collisions(semids, max_collisions):
     # check for overflow
     max_depth = collision_tokens.max().item()
     if max_depth >= max_collisions:
-        raise ValueError(
+        raise CollisionOverflowError(
             f"Collision overflow! Max depth {max_depth} exceeds limit {max_collisions}."
         )
 

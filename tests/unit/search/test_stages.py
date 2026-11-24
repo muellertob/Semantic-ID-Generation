@@ -40,7 +40,7 @@ SPEC = TrialSpec(
     source={"study": "toys.A.rqvae", "trial_number": 7, "retry_of": None},
 )
 # Stage-2 base (patched into BASE_CONFIGS):
-# | key              | base  | after stage2() with SPEC and compile=False                 |
+# | key              | base  | after stage2_config() with SPEC and compile=False          |
 # |------------------|-------|------------------------------------------------------------|
 # | seq2seq.dropout  | 0.1   | 0.2 (spec override)                                        |
 # | general.seed     | 10    | 7 (stage2_seed)                                            |
@@ -218,6 +218,10 @@ def _on_validation(record):
     return False
 
 
+def _stage2(spec, folder):
+    return stages.stage2(spec, folder, stages.stage2_config(spec, folder, compile=False), _on_validation)
+
+
 @pytest.fixture
 def stage2_mocks(tmp_path, monkeypatch):
     """Patches the Stage-2 base config to a small YAML and mocks training and testing; returns (folder, mocks)."""
@@ -240,7 +244,7 @@ def _expected_stage2_config(folder, meta_name):
 
 def test_stage2_trains_on_base_plus_overrides_plus_driver_keys(stage2_mocks):
     folder, mocks = stage2_mocks
-    stages.stage2(SPEC, folder, compile=False, on_validation=_on_validation)
+    _stage2(SPEC, folder)
     assert mocks["train"].call_args_list == [call(str(folder / "configs" / "stage2.yaml"), str(folder / "semids.pt"),
                                                   on_validation=_on_validation)]
     assert _load(folder / "configs" / "stage2.yaml") == _expected_stage2_config(folder, "train.json")
@@ -250,14 +254,14 @@ def test_stage2_with_semids_from_trains_on_the_source_trials_semids(stage2_mocks
     # Phase B and Stage-2 reruns train on the SIDs of the trial they start from
     folder, mocks = stage2_mocks
     spec = dataclasses.replace(SPEC, stage1_overrides={}, semids_from=SOURCE_TRIAL)
-    stages.stage2(spec, folder, compile=False, on_validation=_on_validation)
+    _stage2(spec, folder)
     assert mocks["train"].call_args_list == [call(str(folder / "configs" / "stage2.yaml"),
                                                   f"{SOURCE_TRIAL}/semids.pt", on_validation=_on_validation)]
 
 
 def test_stage2_returns_the_best_checkpoint_named_in_the_train_meta(stage2_mocks):
     folder, _ = stage2_mocks
-    result = stages.stage2(SPEC, folder, compile=False, on_validation=_on_validation)
+    result = _stage2(SPEC, folder)
     best = f"{folder}/checkpoints/stage2_best.pt"
     assert result == stages.Stage2Result(Path(best), {"recommender_run_name": "stage2", "best_model_path": best})
 
@@ -267,7 +271,7 @@ def test_stage2_override_of_a_driver_key_is_rejected(stage2_mocks):
     folder, mocks = stage2_mocks
     spec = dataclasses.replace(SPEC, stage2_overrides={"general.seed": 1})
     with pytest.raises(ValueError) as excinfo:
-        stages.stage2(spec, folder, compile=False, on_validation=_on_validation)
+        _stage2(spec, folder)
     assert str(excinfo.value) == "stage2_overrides must not set driver keys: ['general.seed']"
     assert [m.call_count for m in mocks.values()] == [0, 0]
 
@@ -275,7 +279,7 @@ def test_stage2_override_of_a_driver_key_is_rejected(stage2_mocks):
 def test_test_evaluates_the_best_checkpoint_with_the_trained_config(stage2_mocks):
     # the model is tested exactly as it was trained; only the meta file differs
     folder, mocks = stage2_mocks
-    result = stages.stage2(SPEC, folder, compile=False, on_validation=_on_validation)
+    result = _stage2(SPEC, folder)
     stages.test(SPEC, folder, result.best_checkpoint)
     assert mocks["test"].call_args_list == [call(str(folder / "configs" / "test.yaml"), str(folder / "semids.pt"),
                                                  model_path=f"{folder}/checkpoints/stage2_best.pt")]
@@ -286,7 +290,7 @@ def test_test_with_semids_from_reads_the_source_trials_semids(stage2_mocks):
     # a Stage-2-only rerun is tested on the SIDs it was trained on
     folder, mocks = stage2_mocks
     spec = dataclasses.replace(SPEC, stage1_overrides={}, semids_from=SOURCE_TRIAL)
-    result = stages.stage2(spec, folder, compile=False, on_validation=_on_validation)
+    result = _stage2(spec, folder)
     stages.test(spec, folder, result.best_checkpoint)
     assert mocks["test"].call_args_list == [call(str(folder / "configs" / "test.yaml"), f"{SOURCE_TRIAL}/semids.pt",
                                                  model_path=f"{folder}/checkpoints/stage2_best.pt")]
@@ -294,7 +298,7 @@ def test_test_with_semids_from_reads_the_source_trials_semids(stage2_mocks):
 
 def test_test_returns_the_test_meta(stage2_mocks):
     folder, _ = stage2_mocks
-    result = stages.stage2(SPEC, folder, compile=False, on_validation=_on_validation)
+    result = _stage2(SPEC, folder)
     assert stages.test(SPEC, folder, result.best_checkpoint) == TEST_META
 
 
@@ -303,13 +307,13 @@ def test_stage2_function_that_writes_no_meta_is_an_error(stage2_mocks):
     folder, mocks = stage2_mocks
     mocks["train"].side_effect = None
     with pytest.raises(RuntimeError) as excinfo:
-        stages.stage2(SPEC, folder, compile=False, on_validation=_on_validation)
+        _stage2(SPEC, folder)
     assert str(excinfo.value) == f"the stage finished without writing its meta file {folder / 'meta' / 'train.json'}"
 
 
 def test_test_function_that_writes_no_meta_is_an_error(stage2_mocks):
     folder, mocks = stage2_mocks
-    result = stages.stage2(SPEC, folder, compile=False, on_validation=_on_validation)
+    result = _stage2(SPEC, folder)
     mocks["test"].side_effect = None
     with pytest.raises(RuntimeError) as excinfo:
         stages.test(SPEC, folder, result.best_checkpoint)
