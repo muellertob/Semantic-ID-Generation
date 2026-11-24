@@ -5,6 +5,10 @@ resolved for real from a small base, so the metric is read as in a run.
 import itertools
 import json
 import logging
+import os
+import socket
+import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import ANY, Mock, call
 
@@ -12,7 +16,7 @@ import optuna
 import pytest
 
 from generate_semids import CollisionOverflowError
-from search import runner, stages
+from search import heartbeat, runner, stages
 from search.runner import TrialOutcome, run_trial
 from search.spec import TrialSpec
 
@@ -52,6 +56,9 @@ CURVE = [_record(68, 0.30, 0.30), _record(136, 0.45, 0.45), _record(204, 0.40, 0
 # the clock advances 10 s per reading, so every finished stage took 10 s
 TEN_SECONDS_EACH = {"stage1_seconds": 10, "stage2_seconds": 10, "test_seconds": None}
 
+# the heartbeat's wall clock is fixed, so every beat has the same content
+BEAT = {"host": socket.gethostname(), "pid": os.getpid(), "time": "2026-11-24T10:00:00+00:00"}
+
 
 def _stage2_sending(records):
     def stage2(spec, folder, config, on_validation):
@@ -74,6 +81,7 @@ def mocks(tmp_path, monkeypatch):
     for name in ("wandb", "gc", "torch"):
         monkeypatch.setattr(runner, name, found[name])
     monkeypatch.setattr(runner.time, "monotonic", Mock(side_effect=itertools.count(0, 10)))
+    monkeypatch.setattr(heartbeat, "_now", lambda: datetime(2026, 11, 24, 10, tzinfo=timezone.utc))
     return found
 
 
@@ -123,7 +131,9 @@ def test_an_existing_trial_json_is_rejected_before_any_stage(mocks, folder):
         _run(SPEC, folder)
 
     assert (mocks["stage1"].call_count, mocks["stage2"].call_count) == (0, 0)
-    assert (folder / "trial.json").read_text() == '{"earlier": "run"}'
+    # no heartbeat either: the folder still belongs to the earlier run
+    assert (sorted(path.name for path in folder.iterdir()), (folder / "trial.json").read_text()) == (
+        ["trial.json"], '{"earlier": "run"}')
 
 
 def test_a_context_that_is_not_json_leaves_no_trial_json(mocks, folder):
@@ -132,6 +142,32 @@ def test_a_context_that_is_not_json_leaves_no_trial_json(mocks, folder):
         run_trial(SPEC, folder, None, compile=False, context={"host": Path("/gpu1")})
 
     assert (sorted(folder.iterdir()), mocks["stage1"].call_count) == ([], 0)
+
+
+# reruns need it too: the queue judges a stale claim by the run folder's heartbeat
+@pytest.mark.parametrize("with_trial", [True, False], ids=["search-trial", "rerun"])
+def test_the_heartbeat_is_written_before_stage1_runs(mocks, folder, with_trial):
+    trial = optuna.create_study(direction="maximize").ask() if with_trial else None
+    seen = []
+    mocks["stage1"].side_effect = lambda *args: seen.append(json.loads((folder / "heartbeat").read_text()))
+
+    _run(SPEC, folder, trial)
+
+    assert seen == [BEAT]
+
+
+@pytest.mark.parametrize("stage2_raises", [None, RuntimeError("boom"), KeyboardInterrupt()],
+                         ids=["complete", "crash", "interrupt"])
+def test_the_heartbeat_thread_is_stopped_after_every_trial(mocks, folder, stage2_raises):
+    if stage2_raises is not None:
+        mocks["stage2"].side_effect = stage2_raises
+
+    try:
+        _run(SPEC, folder)
+    except KeyboardInterrupt:
+        pass
+
+    assert [thread for thread in threading.enumerate() if thread.name == "heartbeat"] == []
 
 
 def test_semids_from_skips_stage1(mocks, folder):

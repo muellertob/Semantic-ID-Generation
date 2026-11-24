@@ -4,14 +4,13 @@ One run of the search driver, a search trial or a rerun, in its own folder.
 trial.json is written first ({"spec", "context"}), so a folder always says what ran; the outcome is added when
 the run ends, so "has an outcome" means done. A stage's exception is classified, not raised: a collision overflow
 is "infeasible" (deterministic: no retry, counts toward the budget), anything else is a "crash". KeyboardInterrupt
-and SystemExit propagate: a killed worker is the reaper's case. Every run ends with the same clean-up, because
-a worker runs many trials in one process.
+and SystemExit propagate: a killed worker is the reaper's case. A heartbeat file in the folder shows that the run
+lives, from trial.json until the outcome. Every run ends with the same clean-up, because a worker runs many trials
+in one process.
 """
 import dataclasses
 import gc
-import json
 import logging
-import os
 import time
 from pathlib import Path
 
@@ -23,6 +22,8 @@ from omegaconf import OmegaConf
 import train_seq2seq
 from generate_semids import CollisionOverflowError
 from search import stages
+from search.heartbeat import Heartbeat
+from search.json_files import create_json, replace_json
 from search.reporter import ValidationReporter, objective_value, read_records
 from search.spec import TrialSpec
 
@@ -48,22 +49,24 @@ def run_trial(spec: TrialSpec, folder: str | Path, trial: optuna.Trial | None, *
     folder.mkdir(parents=True, exist_ok=True)
     trial_json = folder / "trial.json"
     head = {"spec": spec.to_json(), "context": context}
-    _create_json_exclusively(trial_json, head)  # a used folder fails here, before any stage
+    create_json(trial_json, head)  # a used folder fails here, before any stage
 
     handler = logging.FileHandler(folder / "trial.log")
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
     logging.getLogger().addHandler(handler)
     timings = {"stage1_seconds": None, "stage2_seconds": None, "test_seconds": None}
     try:
-        try:
-            value = _run_stages(spec, folder, trial, compile, timings)
-            outcome = TrialOutcome("complete", value, None, None, dict(timings))
-        except Exception as error:
-            logger.exception("trial failed")
-            failure_class = "infeasible" if isinstance(error, CollisionOverflowError) else "crash"
-            outcome = TrialOutcome("failed", None, failure_class, f"{type(error).__name__}: {error}", dict(timings))
-        _write_json_atomically(trial_json, {**head, "outcome": dataclasses.asdict(outcome)})
-        return outcome
+        with Heartbeat(folder / "heartbeat"):
+            try:
+                value = _run_stages(spec, folder, trial, compile, timings)
+                outcome = TrialOutcome("complete", value, None, None, dict(timings))
+            except Exception as error:
+                logger.exception("trial failed")
+                failure_class = "infeasible" if isinstance(error, CollisionOverflowError) else "crash"
+                outcome = TrialOutcome("failed", None, failure_class, f"{type(error).__name__}: {error}",
+                                       dict(timings))
+            replace_json(trial_json, {**head, "outcome": dataclasses.asdict(outcome)})
+            return outcome
     finally:
         logging.getLogger().removeHandler(handler)
         handler.close()
@@ -91,25 +94,6 @@ def _run_stages(spec: TrialSpec, folder: Path, trial, compile: bool, timings: di
         stages.test(spec, folder, result.best_checkpoint)
         timings["test_seconds"] = time.monotonic() - start
     return value
-
-
-def _create_json_exclusively(path: Path, data: dict) -> None:
-    # serialized first, so bad data leaves no file; os.link fails if `path` exists and, like os.replace, never
-    # shows a reader on the NFS half a file
-    text = json.dumps(data, indent=2)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(text)
-    try:
-        os.link(tmp, path)
-    finally:
-        tmp.unlink()
-
-
-def _write_json_atomically(path: Path, data: dict) -> None:
-    # a reader on the NFS sees the old file or the new one, never half of one
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(data, indent=2))
-    os.replace(tmp, path)
 
 
 def _clean_up() -> None:
