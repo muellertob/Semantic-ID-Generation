@@ -124,7 +124,7 @@ Tests are managed using `pytest`. Configuration options are defined in `pyprojec
 - **`models/`**: Trained model checkpoints (`.pt`).
 - **`outputs/`**: Generated Semantic IDs (`semids.pt`) and, from `run_experiments.py`, `experiments/` (meta JSONs, configs).
 - **`models_beauty_v2/`, `models_toys/`, `outputs_beauty_v2/`, `outputs_toys/`**: finished multi-seed runs per dataset (Beauty = the September rerun `*_beauty_v2`). Each `outputs_*/experiments/` holds the `*_meta.json` files that `../analysis/scripts/aggregate.py` reads. `models_beauty/` and `outputs_beauty/` are the superseded July runs: never read them.
-- **Git-ignored, local only** (see `.gitignore`): `dataset/`, `models*/`, `outputs*/`, `notebooks/` (exploratory SID-analysis notebooks, e.g. `sid_analysis.py`, `check_utilization.py`), `experiments/` (separator-token seq2seq experiments), `wandb/`, `hyperopt_results/`. The report/thesis marimo notebooks live in `../analysis/notebooks/`.
+- **Git-ignored, local only** (see `.gitignore`): `dataset/`, `models*/`, `outputs*/`, `notebooks/` (exploratory SID-analysis notebooks, e.g. `sid_analysis.py`, `check_utilization.py`), `experiments/` (separator-token seq2seq experiments), `wandb/`, console logs (`*.log`), `scratch_*/`, `.claude/`. The report/thesis marimo notebooks live in `../analysis/notebooks/`.
 
 ---
 
